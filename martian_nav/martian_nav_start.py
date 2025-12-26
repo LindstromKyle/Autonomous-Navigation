@@ -2,10 +2,10 @@ import cv2
 import numpy as np
 from picamera2 import Picamera2
 import time
-import matplotlib.pyplot as plt
+from scipy.ndimage import label, find_objects
 
 # --------------------- CONFIG ---------------------
-PIXELS_PER_CM = 20.0  # <--- TUNE THIS!
+PIXELS_PER_CM = 15.0  # <--- TUNE THIS!
 MIN_FEATURES = 40  # Raised slightly for stability
 REDETECT_EVERY_FRAMES = 20
 MAX_CORNERS = 200  # Good stable number
@@ -37,42 +37,21 @@ mask = np.zeros_like(old_frame)
 nbins = 256
 clip_limit_normalized = 0.01
 clip_limit = clip_limit_normalized * nbins
-
 clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
-
-# fig = plt.figure()
-
-# ax1 = fig.add_subplot(2, 2, 1)
-# ax2 = fig.add_subplot(2, 2, 2)
-# ax3 = fig.add_subplot(2, 2, 3, sharex=ax1, sharey=ax1)
-# ax4 = fig.add_subplot(2, 2, 4, sharex=ax2)
-
-# ax1.imshow(old_gray)
-
-# ax2.hist(old_gray.ravel(), bins=256, range=(0, 255))
-
-# transformed = clahe.apply(old_gray)
-# ax3.imshow(transformed)
-# ax4.hist(transformed.ravel(), bins=256, range=(0, 255))
-
-# plt.tight_layout()
-# plt.show()
-
 
 pos_x = pos_y = 0.0
 frame_count = 0
 
 print("\n=== Martian Rover Navigation ===")
-print("Stable feature refresh enabled.\n")
+print("Stable feature refresh and hazard detection enabled.\n")
 
 while True:
     frame = picam2.capture_array()
     frame_gray_raw = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
 
     # Pre-processing
-
     frame_gray = clahe.apply(frame_gray_raw)
-    # frame_gray = cv2.GaussianBlur(frame_gray, (3, 3), 0)  # Optional, but helps
+    # frame_gray = cv2.GaussianBlur(frame_gray, (3, 3), 0)  # Optional
 
     frame_count += 1
 
@@ -103,7 +82,6 @@ while True:
         if new_pts is not None:
             p0 = new_pts
             mask = np.zeros_like(old_frame)  # Clear trails on full refresh
-            print(f"Feature refresh → {len(p0)} new strong features")
 
     # Update position
     dx_cm = -dx_px / PIXELS_PER_CM
@@ -111,7 +89,78 @@ while True:
     pos_x += dx_cm
     pos_y += dy_cm
 
-    # Draw only successfully tracked trails
+    # --- Hazard Detection (High density = rocks/hazards; sparse = safe) ---
+    grid_size = 6
+    height, width = frame_gray.shape
+    cell_h, cell_w = height // grid_size, width // grid_size
+    density_grid = np.zeros((grid_size, grid_size), dtype=int)
+
+    if len(good_new) > 0:
+        pts = good_new.reshape(-1, 2)
+        for x, y in pts:
+            grid_x = min(int(x // cell_w), grid_size - 1)
+            grid_y = min(int(y // cell_h), grid_size - 1)
+            density_grid[grid_y, grid_x] += 1
+
+    hazard_thresh = 2
+
+    hazard_mask = density_grid > hazard_thresh
+    safe_mask = ~hazard_mask
+
+    # Find largest safe zone using connected components
+    if np.any(safe_mask):
+        labeled_safe, num_safe = label(safe_mask)
+        if num_safe > 0:
+            safe_sizes = [np.sum(labeled_safe == i) for i in range(1, num_safe + 1)]
+            largest_safe_id = np.argmax(safe_sizes) + 1
+
+            # Get bounding box of largest safe blob
+            safe_slice = find_objects(labeled_safe == largest_safe_id)[0]
+
+            # Geometric center (in grid coordinates)
+            geo_center_y = (safe_slice[0].start + safe_slice[0].stop - 1) // 2
+            geo_center_x = (safe_slice[1].start + safe_slice[1].stop - 1) // 2
+
+            # Pixel position of geometric center
+            geo_px = (
+                geo_center_x * cell_w + cell_w // 2,
+                geo_center_y * cell_h + cell_h // 2,
+            )
+
+            # Now find the closest safe (non-hazard) grid cell to this center
+            # Only consider cells that are actually in the safe blob
+            safe_y, safe_x = np.where(labeled_safe == largest_safe_id)
+            safe_coords = list(zip(safe_y, safe_x))
+
+            # If no safe cells (edge case), fallback to center
+            if not safe_coords:
+                safe_center_px = None
+                rel_dx_cm = rel_dy_cm = None
+            else:
+                # Find distances from geo center to each safe cell center
+                cell_centers = [
+                    (sx * cell_w + cell_w // 2, sy * cell_h + cell_h // 2)
+                    for sy, sx in safe_coords
+                ]
+                distances = [
+                    np.hypot(cx - geo_px[0], cy - geo_px[1]) for cx, cy in cell_centers
+                ]
+                closest_idx = np.argmin(distances)
+                safe_center_px = cell_centers[closest_idx]
+
+                # Relative position in cm for commands
+                rel_dx_px = safe_center_px[0] - width // 2
+                rel_dy_px = safe_center_px[1] - height // 2
+                rel_dx_cm = rel_dx_px / PIXELS_PER_CM
+                rel_dy_cm = rel_dy_px / PIXELS_PER_CM
+        else:
+            safe_center_px = None
+            rel_dx_cm = rel_dy_cm = None
+    else:
+        safe_center_px = None
+        rel_dx_cm = rel_dy_cm = None
+
+    # Draw trails and points
     for new, old in zip(good_new, good_old if "good_old" in locals() else []):
         a, b = new.ravel().astype(int)
         c, d = old.ravel().astype(int)
@@ -120,7 +169,18 @@ while True:
 
     img = cv2.add(frame, mask)
 
-    # Clean display: show only current tracked count
+    # Overlay hazards (red) and safe zone (green circle)
+    for gy in range(grid_size):
+        for gx in range(grid_size):
+            if density_grid[gy, gx] > hazard_thresh:
+                top_left = (gx * cell_w, gy * cell_h)
+                bottom_right = ((gx + 1) * cell_w, (gy + 1) * cell_h)
+                cv2.rectangle(img, top_left, bottom_right, (0, 0, 255), 2)
+
+    if safe_center_px is not None:
+        cv2.circle(img, safe_center_px, 30, (0, 255, 0), 3)  # Larger green circle
+
+    # Display info
     cv2.putText(
         img,
         f"Pos: ({pos_x:+.1f}, {pos_y:+.1f}) cm",
@@ -141,6 +201,15 @@ while True:
     )
     cv2.putText(
         img,
+        f"Hazards: {np.sum(hazard_mask)}/{grid_size**2}",
+        (10, 90),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (255, 255, 255),
+        2,
+    )
+    cv2.putText(
+        img,
         "r = reset pos | q = quit",
         (10, img.shape[0] - 20),
         cv2.FONT_HERSHEY_SIMPLEX,
@@ -151,8 +220,8 @@ while True:
 
     cv2.imshow("Martian Rover Navigation", img)
 
-    # Commands
-    if frame_count % 10 == 0:
+    # Console commands toward safe zone
+    if frame_count % 30 == 0:
         mag = abs(dx_cm) + abs(dy_cm)
         if mag > 0.5:
             dist = mag * 15
@@ -160,6 +229,20 @@ while True:
             dir_y = "forward" if dy_cm > 0 else "backward"
             direction = dir_x if abs(dx_cm) > abs(dy_cm) else dir_y
             print(f"→ Move {direction} {dist:.0f} cm")
+
+        if rel_dx_cm is not None and rel_dy_cm is not None:
+            # Safe zone command
+            if abs(rel_dx_cm) > 5 or abs(rel_dy_cm) > 5:
+                dir_x = "right" if rel_dx_cm > 0 else "left"
+                dir_y = "forward" if rel_dy_cm > 0 else "backward"
+                main_dir = dir_x if abs(rel_dx_cm) > abs(rel_dy_cm) else dir_y
+                dist = max(abs(rel_dx_cm), abs(rel_dy_cm))
+                print(f"→ Safe landing zone: Move {main_dir} {dist:.0f} cm")
+            else:
+                print("→ Current position is safe for landing")
+                pass
+        else:
+            print("No safe landing zone detected")
 
     old_gray = frame_gray.copy()
 

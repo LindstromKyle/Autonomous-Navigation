@@ -2,6 +2,9 @@ from picamera2 import Picamera2
 import numpy as np
 import matplotlib.pyplot as plt
 
+# Select name
+image_name = "/home/kyle/repos/Autonomous-Navigation/images/calibration.jpg"
+
 # Initialize the camera
 picam2 = Picamera2()
 
@@ -29,4 +32,4 @@ plt.show()
 # Optionally, save it to a file for visual check (requires OpenCV: pip install opencv-python)
 import cv2
 
-cv2.imwrite("/home/kyle/repos/EDL/test_image_2.jpg", image_array)
+cv2.imwrite(image_name, image_array)
