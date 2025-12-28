@@ -28,7 +28,9 @@ class FeatureDetectorConfig:
     min_distance: int = 7
     block_size: int = 7
 
-    # Optical flow parameters (tightly coupled with Shi-Tomasi)
+
+@dataclass
+class OpticalFlowConfig:
     window_size: Tuple[int, int] = (15, 15)
     max_level: int = 2
 
@@ -47,4 +49,5 @@ class AppConfig:
     feature_detector: FeatureDetectorConfig = field(
         default_factory=FeatureDetectorConfig
     )
+    optical_flow: OpticalFlowConfig = field(default_factory=OpticalFlowConfig)
     hazard: HazardConfig = field(default_factory=HazardConfig)

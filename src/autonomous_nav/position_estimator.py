@@ -1,5 +1,5 @@
-from config import AppConfig
-from utils import pixels_to_cm
+from autonomous_nav.config import AppConfig
+from autonomous_nav.utils import pixels_to_cm
 
 
 class PositionEstimator:

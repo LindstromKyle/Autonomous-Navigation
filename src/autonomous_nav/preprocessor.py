@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from abc import ABC, abstractmethod
-from config import AppConfig, PreprocessorConfig
+from autonomous_nav.config import PreprocessorConfig
 
 
 class Preprocessor(ABC):

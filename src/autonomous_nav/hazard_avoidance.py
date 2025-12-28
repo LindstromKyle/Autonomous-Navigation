@@ -1,8 +1,8 @@
 import numpy as np
 from scipy.ndimage import label, find_objects
 from abc import ABC, abstractmethod
-from config import AppConfig, HazardConfig
-from utils import pixels_to_cm
+from autonomous_nav.config import AppConfig, HazardConfig
+from autonomous_nav.utils import pixels_to_cm
 
 
 class HazardAvoidance(ABC):
