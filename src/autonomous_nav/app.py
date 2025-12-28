@@ -1,3 +1,4 @@
+import time
 import cv2
 import numpy as np
 from autonomous_nav.config import AppConfig
@@ -10,7 +11,9 @@ from autonomous_nav.preprocessor import (
 from autonomous_nav.feature_detector import ShiTomasiDetector
 from autonomous_nav.optical_flow import OpticalFlowModule
 from autonomous_nav.position_estimator import PositionEstimator
+from autonomous_nav.imu import IMUModule
 from autonomous_nav.hazard_avoidance import DensityBasedHazardAvoidance
+from autonomous_nav.utils import pixels_to_cm
 from autonomous_nav.visualizer import Visualizer
 from autonomous_nav.commander import Commander
 
@@ -34,6 +37,7 @@ class AutonomousNavigationApp:
 
         feature_detector = ShiTomasiDetector(self.config.feature_detector)
         optical_flow = OpticalFlowModule(self.config.optical_flow)
+        imu = IMUModule(self.config.imu)
         position = PositionEstimator(self.config)
         hazard_detector = DensityBasedHazardAvoidance(self.config.hazard, self.config)
         visualizer = Visualizer(self.config)
@@ -47,6 +51,7 @@ class AutonomousNavigationApp:
         trail_mask = np.zeros_like(old_frame)
 
         frame_count = 0
+        last_frame_time = time.time()
         print("\n=== Martian Rover Navigation ===")
 
         while True:
@@ -71,7 +76,20 @@ class AutonomousNavigationApp:
                 status if "status" in locals() else np.array([]),
                 old_features,
             )
-            position.update(flow_dx_px, flow_dy_px)
+
+            imu_data = imu.read()
+            # Compute visual velocity (from flow, in cm/s; assume dt from imu or measure frame_dt)
+            frame_dt = time.time() - last_frame_time
+            vis_vel_x = (
+                -pixels_to_cm(flow_dx_px, self.config.global_.pixels_per_cm) / frame_dt
+            )
+            vis_vel_y = (
+                pixels_to_cm(flow_dy_px, self.config.global_.pixels_per_cm) / frame_dt
+            )
+
+            # Fuse
+            position.predict(imu_data["accel"], imu_data["dt"])
+            position.update(vis_vel_x, vis_vel_y)
 
             # Update to tracked features first (default to continuing with valid tracked points)
             old_features = valid_new_pts if valid_new_pts.size > 0 else None
@@ -112,6 +130,7 @@ class AutonomousNavigationApp:
                 commander.issue_commands(flow_dx_cm, flow_dy_cm, safe_dx_cm, safe_dy_cm)
 
             old_gray = gray.copy()
+            last_frame_time = time.time()
 
             key = cv2.waitKey(30) & 0xFF
             if key == ord("q"):

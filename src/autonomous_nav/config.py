@@ -36,6 +36,15 @@ class OpticalFlowConfig:
 
 
 @dataclass
+class IMUConfig:
+    sample_rate_hz: int = 20  # Match camera FPS-ish
+    accel_sensitivity: float = 16384.0
+    gyro_sensitivity: float = 131.0
+    mag_sensitivity: float = 0.15
+    bias_calibration_samples: int = 100
+
+
+@dataclass
 class HazardConfig:
     grid_size: int = 8
     threshold: int = 2
@@ -50,4 +59,5 @@ class AppConfig:
         default_factory=FeatureDetectorConfig
     )
     optical_flow: OpticalFlowConfig = field(default_factory=OpticalFlowConfig)
+    imu: IMUConfig = field(default_factory=IMUConfig)
     hazard: HazardConfig = field(default_factory=HazardConfig)

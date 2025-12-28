@@ -1,3 +1,4 @@
+import numpy as np
 from autonomous_nav.config import AppConfig
 from autonomous_nav.utils import pixels_to_cm
 
@@ -7,15 +8,48 @@ class PositionEstimator:
         self.config = config
         self.pos_x: float = 0.0
         self.pos_y: float = 0.0
+        self.vel_x: float = 0.0  # New: cm/s
+        self.vel_y: float = 0.0  # New: cm/s
 
-    def update(self, flow_dx_px: float, flow_dy_px: float):
-        dx_cm = -pixels_to_cm(flow_dx_px, self.config.global_.pixels_per_cm)
-        dy_cm = pixels_to_cm(flow_dy_px, self.config.global_.pixels_per_cm)
-        self.pos_x += dx_cm
-        self.pos_y += dy_cm
+        # Kalman state: [pos_x, pos_y, vel_x, vel_y] in cm, cm/s
+        self.x = np.zeros((4, 1))
+        self.P = np.eye(4) * 1000  # Initial uncertainty
+
+        # Process noise (tune: high for IMU)
+        self.Q = np.diag([0.01, 0.01, 1.0, 1.0])
+        # Measurement noise (tune: lower for visual)
+        self.R = np.diag([1.0, 1.0])  # For vel_x, vel_y measurements
+
+    def predict(self, accel: np.array, dt: float):
+        # Accel in cm/s² (convert from m/s²)
+        a_x, a_y = accel[1] * 100, accel[0] * 100  # Adjust axes if needed
+
+        # State transition matrix (constant vel + accel input)
+        A = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]])
+        # Control input matrix for accel
+        B = np.array([[0.5 * dt**2, 0], [0, 0.5 * dt**2], [dt, 0], [0, dt]])
+        u = np.array([[a_x], [a_y]])
+
+        self.x = A @ self.x + B @ u
+        self.P = A @ self.P @ A.T + self.Q
+
+    def update(self, vis_vel_x: float, vis_vel_y: float):
+        # Measurement: vel from visual (cm/s)
+        z = np.array([[vis_vel_x], [vis_vel_y]])
+        H = np.array([[0, 0, 1, 0], [0, 0, 0, 1]])  # Observe velocities
+
+        y = z - H @ self.x
+        S = H @ self.P @ H.T + self.R
+        K = self.P @ H.T @ np.linalg.inv(S)
+
+        self.x += K @ y
+        self.P = (np.eye(4) - K @ H) @ self.P
+
+        self.pos_x, self.pos_y, self.vel_x, self.vel_y = self.x.flatten()
 
     def reset(self):
-        self.pos_x = self.pos_y = 0.0
+        self.x.fill(0)
+        self.P = np.eye(4) * 1000
 
     @property
     def position(self) -> tuple[float, float]:

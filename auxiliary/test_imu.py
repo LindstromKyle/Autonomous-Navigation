@@ -2,7 +2,6 @@ import qwiic_icm20948
 import time
 import sys
 import numpy as np
-import matplotlib.pyplot as plt
 
 IMU = qwiic_icm20948.QwiicIcm20948()
 
@@ -30,8 +29,12 @@ while True:
         mags_raw = np.array([IMU.mxRaw, IMU.myRaw, IMU.mzRaw])
         mags_uT = np.round(mags_raw * mag_sens, 2)
 
-        print(f"Accel (m/s^2): X={accels_si[0]}    Y={accels_si[1]}    Z={accels_si[2]}")
-        print(f"Gyro (deg/s):  X={gyros_deg_s[0]}    Y={gyros_deg_s[1]}    Z={gyros_deg_s[2]}")
+        print(
+            f"Accel (m/s^2): X={accels_si[0]}    Y={accels_si[1]}    Z={accels_si[2]}"
+        )
+        print(
+            f"Gyro (deg/s):  X={gyros_deg_s[0]}    Y={gyros_deg_s[1]}    Z={gyros_deg_s[2]}"
+        )
         print(f"Mag (uT):      X={mags_uT[0]}    Y={mags_uT[1]}    Z={mags_uT[2]}")
         print(f"Temp (C):      {np.round((IMU.tmpRaw / 333.87) + 21.0,2)}")
         print("")
@@ -40,4 +43,3 @@ while True:
     else:
         print("Waiting for data...")
         time.sleep(0.5)
-
