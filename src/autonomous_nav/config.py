@@ -4,7 +4,7 @@ from typing import Tuple
 
 @dataclass
 class GlobalConfig:
-    pixels_per_cm: float = 14.0
+    pixels_per_cm: float = 25.0  # 55cm = 17.5, 40cm = 25.0
     frame_size: Tuple[int, int] = (640, 480)
     min_features: int = 40
     num_frames_redetect: int = 20
@@ -23,7 +23,7 @@ class PreprocessorConfig:
 
 @dataclass
 class FeatureDetectorConfig:
-    max_corners: int = 200
+    max_corners: int = 300
     quality_level: float = 0.1
     min_distance: int = 7
     block_size: int = 7
@@ -42,6 +42,8 @@ class IMUConfig:
     gyro_sensitivity: float = 131.0
     mag_sensitivity: float = 0.15
     bias_calibration_samples: int = 100
+    target_predict_rate: int = 100
+    bias_file = "/home/kyle/repos/Autonomous-Navigation/examples/imu_biases.npz"
 
 
 @dataclass

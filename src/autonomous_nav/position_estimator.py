@@ -22,7 +22,7 @@ class PositionEstimator:
 
     def predict(self, accel: np.array, dt: float):
         # Accel in cm/s² (convert from m/s²)
-        a_x, a_y = accel[1] * 100, accel[0] * 100  # Adjust axes if needed
+        a_x, a_y = accel[0] * 100, -1 * accel[1] * 100  # Adjust axes if needed
 
         # State transition matrix (constant vel + accel input)
         A = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]])

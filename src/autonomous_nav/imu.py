@@ -1,3 +1,4 @@
+import os
 import qwiic_icm20948
 import numpy as np
 import time
@@ -10,15 +11,25 @@ class IMUModule:
         self.config = config
         self.imu = qwiic_icm20948.QwiicIcm20948()
         if not self.imu.connected:
-            print("IMU not connected!", file=sys.stderr)
-            sys.exit(1)
+            raise Exception("IMU not connected!")
         self.imu.begin()
 
         # Biases (estimated at init)
         self.accel_bias = np.zeros(3)
         self.gyro_bias = np.zeros(3)
-        # self.calibrate_biases()
-
+        if os.path.exists(self.config.bias_file):
+            print("Loading saved IMU biases...")
+            biases = np.load(self.config.bias_file)
+            self.accel_bias = biases["accel_bias"]
+            self.gyro_bias = biases["gyro_bias"]
+        else:
+            self.calibrate_biases()
+            np.savez(
+                self.config.bias_file,
+                accel_bias=self.accel_bias,
+                gyro_bias=self.gyro_bias,
+            )
+            print("Biases saved for future runs.")
         self.last_time = time.time()
 
     def calibrate_biases(self):
@@ -45,8 +56,10 @@ class IMUModule:
         dt = time.time() - self.last_time
         self.last_time = time.time()
 
+        # Inverting y axis to match my physical setup
         accel_raw = (
-            np.array([self.imu.axRaw, self.imu.ayRaw, self.imu.azRaw]) - self.accel_bias
+            np.array([self.imu.axRaw, -self.imu.ayRaw, self.imu.azRaw])
+            - self.accel_bias
         )
         accel_g = accel_raw / self.config.accel_sensitivity
         accel_m_s2 = accel_g * 9.80665  # To SI units
@@ -56,7 +69,6 @@ class IMUModule:
         )
         gyro_deg_s = gyro_raw / self.config.gyro_sensitivity
 
-        # Assuming x=forward (dy), y=right (dx), z=up; adjust as needed
         return {
             "accel": accel_m_s2,  # np.array [x, y, z] in m/s²
             "gyro": gyro_deg_s,  # np.array [x, y, z] in deg/s
