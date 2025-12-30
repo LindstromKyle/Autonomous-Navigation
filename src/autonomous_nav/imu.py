@@ -56,11 +56,14 @@ class IMUModule:
         dt = time.time() - self.last_time
         self.last_time = time.time()
 
-        # Inverting y axis to match my physical setup
+        # Subtract bias
         accel_raw = (
-            np.array([self.imu.axRaw, -self.imu.ayRaw, self.imu.azRaw])
-            - self.accel_bias
+            np.array([self.imu.axRaw, self.imu.ayRaw, self.imu.azRaw]) - self.accel_bias
         )
+
+        # Invert Y to align with physcial coordinates
+        accel_raw[1] = -accel_raw[1]
+
         accel_g = accel_raw / self.config.accel_sensitivity
         accel_m_s2 = accel_g * 9.80665  # To SI units
 

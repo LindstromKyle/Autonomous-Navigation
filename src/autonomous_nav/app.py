@@ -45,7 +45,7 @@ class AutonomousNavigationApp:
         commander = Commander()
 
         # Preview countdown
-        camera.run_countdown_preview(4.0)
+        camera.run_countdown_preview()
 
         # Initial frame and features
         old_frame = camera.capture_frame()
@@ -59,7 +59,6 @@ class AutonomousNavigationApp:
 
         print("\n=== Martian Rover Navigation ===")
 
-        # Target prediction rate (Hz) — adjust based on Pi 5 performance
         target_predict_rate = self.config.imu.target_predict_rate
         min_update_threshold = self.config.global_.min_features // 2
 
@@ -67,12 +66,14 @@ class AutonomousNavigationApp:
 
         while True:
             current_time = time.time()
-            frame_dt = current_time - last_frame_time  # Actual time between frames
+            frame_dt = current_time - last_frame_time
 
             frame = camera.capture_frame()
             gray_raw = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
             gray = preprocessor.process(gray_raw)
             frame_count += 1
+
+            h, w = gray.shape
 
             valid_new_pts = np.empty((0, 1, 2))
             valid_old_pts = np.empty((0, 1, 2))
@@ -91,23 +92,18 @@ class AutonomousNavigationApp:
                 old_features,
             )
 
-            # === HIGH-RATE PREDICTION USING MULTIPLE IMU READINGS ===
-            # We aim to run predict() many times with small dt
+            # High-rate IMU prediction
             num_predict_steps = max(1, int(frame_dt * target_predict_rate))
             successful_predicts = 0
-
             for _ in range(num_predict_steps):
                 imu_data = imu.read()
                 if imu_data and imu_data["dt"] > 0:
-                    # Predict with small time step using latest accel
                     position.predict(imu_data["accel"], imu_data["dt"])
                     successful_predicts += 1
-
-            # Fallback: if no IMU data at all, use one big step with zero accel
             if successful_predicts == 0 and frame_dt > 0:
                 position.predict(np.zeros(3), frame_dt)
 
-            # === VISUAL VELOCITY MEASUREMENT AND UPDATE ===
+            # Visual velocity update
             if frame_dt > 0:
                 vis_vel_x = (
                     -pixels_to_cm(flow_dx_px, self.config.global_.pixels_per_cm)
@@ -120,20 +116,16 @@ class AutonomousNavigationApp:
             else:
                 vis_vel_x = vis_vel_y = 0.0
 
-            # Only perform update if we have reliable visual data
             if len(valid_new_pts) >= min_update_threshold:
                 position.update(vis_vel_x, vis_vel_y)
             else:
-                # Optional: print warning less frequently
                 if frame_count % 30 == 0:
                     print(
                         f"Low features ({len(valid_new_pts)}), skipping visual update — relying on IMU"
                     )
 
-            # Update tracked features
             old_features = valid_new_pts if valid_new_pts.size > 0 else None
 
-            # Redetect features if needed
             if (
                 old_features is None
                 or len(old_features) < self.config.global_.min_features
@@ -142,13 +134,32 @@ class AutonomousNavigationApp:
                 old_features = feature_detector.detect_features(gray)
                 trail_mask = np.zeros_like(old_frame)
 
-            # Hazard detection (uses current valid features)
-            h, w = gray.shape
+            # --- Planned route logic ---
+            remaining_x_cm = position.remaining_x
+            remaining_y_cm = position.remaining_y
+            in_landing_mode = position.in_landing_mode
+
+            target_px = None
+            if in_landing_mode:
+                ppc = self.config.global_.pixels_per_cm
+                target_dx_px = remaining_x_cm * ppc
+                # Flip Y to align with physical coordinate system
+                target_dy_px = -remaining_y_cm * ppc
+                frame_center_x = w // 2
+                frame_center_y = h // 2
+                target_px = (
+                    int(frame_center_x + target_dx_px),
+                    int(frame_center_y + target_dy_px),
+                )
+
+            # Hazard detection with optional target bias
             safe_dx_cm, safe_dy_cm, hazard_mask, safe_center_px = (
-                hazard_detector.detect(valid_new_pts.reshape(-1, 2), h, w)
+                hazard_detector.detect(
+                    valid_new_pts.reshape(-1, 2), h, w, target_px=target_px
+                )
             )
 
-            # Visualization
+            # Visualization (pass remaining for arrow)
             annotated = visualizer.annotate_frame(
                 frame.copy(),
                 trail_mask,
@@ -158,19 +169,29 @@ class AutonomousNavigationApp:
                 len(valid_new_pts),
                 hazard_mask,
                 safe_center_px,
+                remaining_x_cm,
+                remaining_y_cm,
+                in_landing_mode,
             )
 
             cv2.imshow("Martian Rover Navigation", annotated)
 
             # Console commands every 30 frames
             if frame_count % 30 == 0:
-                # Use raw flow for commands (consistent with original behavior)
                 flow_dx_cm = -(flow_dx_px / self.config.global_.pixels_per_cm)
                 flow_dy_cm = flow_dy_px / self.config.global_.pixels_per_cm
-                commander.issue_commands(flow_dx_cm, flow_dy_cm, safe_dx_cm, safe_dy_cm)
+                Commander.issue_commands(
+                    flow_dx_cm,
+                    flow_dy_cm,
+                    safe_dx_cm,
+                    safe_dy_cm,
+                    remaining_x_cm,
+                    remaining_y_cm,
+                    in_landing_mode,
+                )
 
             old_gray = gray.copy()
-            last_frame_time = current_time  # Use the time at start of this frame
+            last_frame_time = current_time
 
             key = cv2.waitKey(30) & 0xFF
             if key == ord("q"):

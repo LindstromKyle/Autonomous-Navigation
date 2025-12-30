@@ -8,6 +8,7 @@ class GlobalConfig:
     frame_size: Tuple[int, int] = (640, 480)
     min_features: int = 40
     num_frames_redetect: int = 20
+    countdown_duration = 3.5
 
 
 @dataclass
@@ -47,6 +48,14 @@ class IMUConfig:
 
 
 @dataclass
+class NavigationConfig:
+    target_offset_x_cm: float = 10.0
+    target_offset_y_cm: float = 0.0
+    arrival_threshold_cm: float = 2.0
+    arrow_max_length_px: int = 250
+
+
+@dataclass
 class HazardConfig:
     grid_size: int = 8
     threshold: int = 2
@@ -62,4 +71,5 @@ class AppConfig:
     )
     optical_flow: OpticalFlowConfig = field(default_factory=OpticalFlowConfig)
     imu: IMUConfig = field(default_factory=IMUConfig)
+    navigation: NavigationConfig = field(default_factory=NavigationConfig)
     hazard: HazardConfig = field(default_factory=HazardConfig)

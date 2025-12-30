@@ -8,7 +8,13 @@ from autonomous_nav.utils import pixels_to_cm
 class HazardAvoidance(ABC):
     @abstractmethod
     def detect(
-        self, features: np.ndarray, frame_height: int, frame_width: int
+        self,
+        features: np.ndarray,
+        frame_height: int,
+        frame_width: int,
+        target_px: (
+            tuple[int, int] | None
+        ) = None,  # New: optional target in px for landing mode
     ) -> tuple[float | None, float | None, np.ndarray, tuple[int, int] | None]:
         """
         Returns:
@@ -25,7 +31,11 @@ class DensityBasedHazardAvoidance(HazardAvoidance):
         self.pixels_per_cm = global_config.global_.pixels_per_cm
 
     def detect(
-        self, features: np.ndarray, frame_height: int, frame_width: int
+        self,
+        features: np.ndarray,
+        frame_height: int,
+        frame_width: int,
+        target_px: tuple[int, int] | None = None,
     ) -> tuple[float | None, float | None, np.ndarray, tuple[int, int] | None]:
         grid_size = self.config.grid_size
         cell_h = frame_height // grid_size
@@ -54,29 +64,53 @@ class DensityBasedHazardAvoidance(HazardAvoidance):
             return None, None, hazard_mask, None
 
         labeled, num = label(safe_mask)
-        sizes = [np.sum(labeled == i) for i in range(1, num + 1)]
-        largest_id = np.argmax(sizes) + 1
-        safe_slice = find_objects(labeled == largest_id)[0]
+        if num == 0:
+            return None, None, hazard_mask, None
 
-        # Geometric center of largest safe zone
-        cy = (safe_slice[0].start + safe_slice[0].stop - 1) // 2
-        cx = (safe_slice[1].start + safe_slice[1].stop - 1) // 2
-        geo_px = (cx * cell_w + cell_w // 2, cy * cell_h + cell_h // 2)
+        cell_centers = []
+        sizes = []
+        for i in range(1, num + 1):
+            safe_slice = find_objects(labeled == i)[0]
+            cy = (safe_slice[0].start + safe_slice[0].stop - 1) // 2
+            cx = (safe_slice[1].start + safe_slice[1].stop - 1) // 2
+            center_px = (cx * cell_w + cell_w // 2, cy * cell_h + cell_h // 2)
+            size = np.sum(labeled == i)
+            cell_centers.append(center_px)
+            sizes.append(size)
 
-        # Closest actual safe cell center
-        safe_ys, safe_xs = np.where(labeled == largest_id)
-        cell_centers = [
-            (sx * cell_w + cell_w // 2, sy * cell_h + cell_h // 2)
-            for sy, sx in zip(safe_ys, safe_xs)
-        ]
-        distances = [
-            np.hypot(px - geo_px[0], py - geo_px[1]) for px, py in cell_centers
-        ]
-        closest = cell_centers[np.argmin(distances)]
+        if target_px is None:
+            # Standard mode: largest safe zone (always return one if any exist)
+            if num > 0:
+                best_idx = np.argmax(sizes)
+                safe_center_px = cell_centers[best_idx]
+            else:
+                safe_center_px = None
+        else:
+            # Landing mode: only accept zones close to target_px
+            distances = [
+                np.hypot(cx - target_px[0], cy - target_px[1])
+                for cx, cy in cell_centers
+            ]
+            proximity_threshold_px = min(frame_width, frame_height) // 2
 
-        dx_px = closest[0] - frame_width // 2
-        dy_px = closest[1] - frame_height // 2
-        dx_cm = pixels_to_cm(dx_px, self.pixels_per_cm)
-        dy_cm = pixels_to_cm(dy_px, self.pixels_per_cm)
+            candidates = [
+                i for i, d in enumerate(distances) if d < proximity_threshold_px
+            ]
 
-        return dx_cm, dy_cm, hazard_mask, closest
+            if candidates:
+                # Pick largest among proximate ones
+                best_idx = candidates[np.argmax([sizes[i] for i in candidates])]
+                safe_center_px = cell_centers[best_idx]
+            else:
+                # No safe zone near target → explicitly return None
+                safe_center_px = None
+
+        if safe_center_px is None:
+            dx_cm = dy_cm = None
+        else:
+            dx_px = safe_center_px[0] - frame_width // 2
+            dy_px = safe_center_px[1] - frame_height // 2
+            dx_cm = pixels_to_cm(dx_px, self.pixels_per_cm)
+            dy_cm = pixels_to_cm(dy_px, self.pixels_per_cm)
+
+        return dx_cm, dy_cm, hazard_mask, safe_center_px

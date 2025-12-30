@@ -21,8 +21,8 @@ class CameraModule:
     def stop(self):
         self.picam2.stop()
 
-    def run_countdown_preview(self, countdown_duration):
-
+    def run_countdown_preview(self):
+        countdown_duration = self.config.global_.countdown_duration
         start_time = time.time()
 
         while True:
@@ -36,14 +36,36 @@ class CameraModule:
             frame = self.capture_frame()
             overlay = frame.copy()
 
+            # Text to display
+            countdown_text = f"{remaining:.1f}"
+
+            # Get text size for perfect centering
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 2.0
+            thickness = 5
+            (text_width, text_height), baseline = cv2.getTextSize(
+                countdown_text, font, font_scale, thickness
+            )
+
+            # Center coordinates
+            center_x = frame.shape[1] // 2
+            center_y = frame.shape[0] // 2
+
+            # Position text so its center aligns with frame center
+            text_x = center_x - text_width // 2
+            text_y = (
+                center_y + text_height // 2
+            )  # + because OpenCV baseline is bottom-left
+
+            # Draw the text
             cv2.putText(
                 overlay,
-                f"{remaining:.1f}",
-                ((frame.shape[1] // 2) - 50, (frame.shape[0] // 2)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                2.0,
-                (0, 255, 0),
-                5,
+                countdown_text,
+                (text_x, text_y),
+                font,
+                font_scale,
+                (0, 255, 0),  # Green
+                thickness,
                 cv2.LINE_AA,
             )
 

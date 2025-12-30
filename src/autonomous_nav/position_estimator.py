@@ -20,6 +20,27 @@ class PositionEstimator:
         # Measurement noise (tune: lower for visual)
         self.R = np.diag([1.0, 1.0])  # For vel_x, vel_y measurements
 
+        # Navigation
+        self.target_x = config.navigation.target_offset_x_cm
+        self.target_y = config.navigation.target_offset_y_cm
+        self.arrival_threshold_cm = config.navigation.arrival_threshold_cm
+
+    @property
+    def remaining_x(self) -> float:
+        return self.target_x - self.pos_x
+
+    @property
+    def remaining_y(self) -> float:
+        return self.target_y - self.pos_y
+
+    @property
+    def remaining_distance(self) -> float:
+        return np.hypot(self.remaining_x, self.remaining_y)
+
+    @property
+    def in_landing_mode(self) -> bool:
+        return self.remaining_distance < self.arrival_threshold_cm
+
     def predict(self, accel: np.array, dt: float):
         # Accel in cm/s² (convert from m/s²)
         a_x, a_y = accel[0] * 100, -1 * accel[1] * 100  # Adjust axes if needed
