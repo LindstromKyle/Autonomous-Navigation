@@ -1,6 +1,5 @@
 import numpy as np
 from autonomous_nav.config import AppConfig
-from autonomous_nav.utils import pixels_to_cm
 
 
 class PositionEstimator:

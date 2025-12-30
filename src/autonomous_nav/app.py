@@ -12,10 +12,10 @@ from autonomous_nav.feature_detector import ShiTomasiDetector
 from autonomous_nav.optical_flow import OpticalFlowModule
 from autonomous_nav.position_estimator import PositionEstimator
 from autonomous_nav.imu import IMUModule
-from autonomous_nav.hazard_avoidance import DensityBasedHazardAvoidance
+from autonomous_nav.hazard_avoidance import ClearanceBasedHazardAvoidance
 from autonomous_nav.utils import pixels_to_cm
 from autonomous_nav.visualizer import Visualizer
-from autonomous_nav.commander import Commander
+from autonomous_nav.mission_manager import MissionManager
 
 
 class AutonomousNavigationApp:
@@ -40,9 +40,11 @@ class AutonomousNavigationApp:
         imu = IMUModule(self.config.imu)
 
         position = PositionEstimator(self.config)
-        hazard_detector = DensityBasedHazardAvoidance(self.config.hazard, self.config)
+        hazard_detector = ClearanceBasedHazardAvoidance(self.config.hazard, self.config)
         visualizer = Visualizer(self.config)
-        commander = Commander()
+
+        # New: Mission Manager
+        mission_manager = MissionManager(self.config)
 
         # Preview countdown
         camera.run_countdown_preview()
@@ -137,10 +139,9 @@ class AutonomousNavigationApp:
             # --- Planned route logic ---
             remaining_x_cm = position.remaining_x
             remaining_y_cm = position.remaining_y
-            in_landing_mode = position.in_landing_mode
 
             target_px = None
-            if in_landing_mode:
+            if mission_manager.in_landing_phase:
                 ppc = self.config.global_.pixels_per_cm
                 target_dx_px = remaining_x_cm * ppc
                 # Flip Y to align with physical coordinate system
@@ -159,7 +160,18 @@ class AutonomousNavigationApp:
                 )
             )
 
-            # Visualization (pass remaining for arrow)
+            # Update mission mode
+            current_mode = mission_manager.update(
+                position.pos_x,
+                position.pos_y,
+                position.vel_x,
+                position.vel_y,
+                safe_dx_cm,
+                safe_dy_cm,
+                safe_center_px,
+            )
+
+            # Visualization
             annotated = visualizer.annotate_frame(
                 frame.copy(),
                 trail_mask,
@@ -171,24 +183,10 @@ class AutonomousNavigationApp:
                 safe_center_px,
                 remaining_x_cm,
                 remaining_y_cm,
-                in_landing_mode,
+                current_mode,  # Changed
             )
 
             cv2.imshow("Martian Rover Navigation", annotated)
-
-            # Console commands every 30 frames
-            if frame_count % 30 == 0:
-                flow_dx_cm = -(flow_dx_px / self.config.global_.pixels_per_cm)
-                flow_dy_cm = flow_dy_px / self.config.global_.pixels_per_cm
-                Commander.issue_commands(
-                    flow_dx_cm,
-                    flow_dy_cm,
-                    safe_dx_cm,
-                    safe_dy_cm,
-                    remaining_x_cm,
-                    remaining_y_cm,
-                    in_landing_mode,
-                )
 
             old_gray = gray.copy()
             last_frame_time = current_time

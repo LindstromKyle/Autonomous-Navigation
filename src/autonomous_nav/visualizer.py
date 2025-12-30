@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from autonomous_nav.config import AppConfig
+from autonomous_nav.mission_manager import MissionMode
 
 
 class Visualizer:
@@ -20,11 +21,12 @@ class Visualizer:
         safe_center_px: tuple[int, int] | None,
         remaining_x_cm: float,
         remaining_y_cm: float,
-        in_landing_mode: bool,
+        current_mode: MissionMode,
     ) -> np.ndarray:
         img = frame.copy()
+        h, w = frame.shape[:2]
 
-        # Draw trails and points
+        # Draw optical flow trails and current feature points
         for new, old in zip(new_pts, old_pts):
             a, b = map(int, new.ravel())
             c, d = map(int, old.ravel())
@@ -33,12 +35,11 @@ class Visualizer:
 
         img = cv2.add(img, trail_mask)
 
-        # === Hazard Grid: Red borders always, Green infill ONLY in landing mode ===
-        h, w = frame.shape[:2]
+        # === Hazard Grid: Red borders always drawn ===
         gs = self.config.hazard.grid_size
         ch, cw = h // gs, w // gs
 
-        # Temporary overlay for green safe fills
+        # Temporary overlay for semi-transparent green safe fills
         overlay = img.copy()
 
         # Always draw red grid borders on all cells
@@ -48,9 +49,12 @@ class Visualizer:
                 br = ((c + 1) * cw, (r + 1) * ch)
                 cv2.rectangle(img, tl, br, (0, 0, 255), 2)
 
-        # Only fill and highlight safe cells when in landing mode
-        if in_landing_mode:
-            # Semi-transparent green fill on safe cells
+        # Only fill safe cells with green during landing phases
+        if current_mode in (
+            MissionMode.LANDING_APPROACH,
+            MissionMode.LANDED_SAFE,
+            MissionMode.NO_SAFE_ZONE,
+        ):
             for r in range(gs):
                 for c in range(gs):
                     if not hazard_mask[r, c]:
@@ -58,8 +62,8 @@ class Visualizer:
                         br_inset = ((c + 1) * cw - 3, (r + 1) * ch - 3)
                         cv2.rectangle(overlay, tl_inset, br_inset, (0, 255, 0), -1)
 
-            # Blend green fills
-            img = cv2.addWeighted(overlay, 0.4, img, 0.5, 0)
+            # Blend green fills with lower alpha (more transparent)
+            img = cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
 
             # Bright green borders on safe cells
             for r in range(gs):
@@ -69,14 +73,46 @@ class Visualizer:
                         br = ((c + 1) * cw, (r + 1) * ch)
                         cv2.rectangle(img, tl, br, (0, 255, 0), 3)
 
+        # === Precise selected landing site marker — ONLY in landing phases ===
+        if (
+            current_mode
+            in (
+                MissionMode.LANDING_APPROACH,
+                MissionMode.LANDED_SAFE,
+                MissionMode.NO_SAFE_ZONE,
+            )
+            and safe_center_px is not None
+        ):
+            cx, cy = safe_center_px
+            cv2.circle(img, (cx, cy), 45, (0, 255, 0), 5)
+            cv2.circle(img, (cx, cy), 30, (0, 220, 0), -1)  # Solid inner circle
+            cv2.putText(
+                img,
+                "SAFE LANDING SITE",
+                (cx - 85, cy - 55),
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.7,
+                (0, 255, 0),
+                2,
+            )
+
         # === Mode Indicator Text (top center) ===
-        mode_text = "LANDING MODE" if in_landing_mode else "NAVIGATION MODE"
-        mode_color = (0, 255, 0) if in_landing_mode else (255, 200, 0)
-        text_size = cv2.getTextSize(mode_text, cv2.FONT_HERSHEY_DUPLEX, 0.7, 2)[0]
+        if current_mode == MissionMode.NAVIGATION:
+            mode_text = "NAVIGATION MODE"
+            mode_color = (255, 200, 0)
+        elif current_mode == MissionMode.LANDING_APPROACH:
+            mode_text = "LANDING APPROACH"
+            mode_color = (0, 255, 255)
+        elif current_mode == MissionMode.LANDED_SAFE:
+            mode_text = "LANDED - SAFE"
+            mode_color = (0, 255, 0)
+        else:  # NO_SAFE_ZONE
+            mode_text = "NO SAFE ZONE"
+            mode_color = (0, 0, 255)
+
+        text_size = cv2.getTextSize(mode_text, cv2.FONT_HERSHEY_DUPLEX, 0.8, 3)[0]
         text_x = (w - text_size[0]) // 2
         text_y = 30
-
-        # Background strip
         cv2.rectangle(
             img,
             (text_x - 10, text_y - text_size[1] - 10),
@@ -84,78 +120,108 @@ class Visualizer:
             (0, 0, 0),
             -1,
         )
-        # Text
         cv2.putText(
             img,
             mode_text,
             (text_x, text_y),
             cv2.FONT_HERSHEY_DUPLEX,
-            0.7,
+            0.8,
             mode_color,
-            2,
+            3,
         )
 
-        # === GUIDANCE CUES ===
-        if not in_landing_mode:
-            # Navigation phase: Blue arrow
-            if abs(remaining_x_cm) > 0.1 or abs(remaining_y_cm) > 0.1:
-                center = (w // 2, h // 2)
-                remaining_dist_cm = np.hypot(remaining_x_cm, remaining_y_cm)
-                ppc = self.config.global_.pixels_per_cm
-                direction = np.array([remaining_x_cm, -remaining_y_cm])
-                direction /= remaining_dist_cm
-                max_len = getattr(self.config.navigation, "arrow_max_length_px", 200)
-                arrow_length_px = min(remaining_dist_cm * ppc, max_len)
-                end_point = center + (direction * arrow_length_px).astype(int)
-                end_point = (int(end_point[0]), int(end_point[1]))
-                cv2.arrowedLine(img, center, end_point, (255, 200, 0), 6, tipLength=0.3)
+        # === Mode-specific additional visuals and text ===
+        center = (w // 2, h // 2)
+        remaining_dist_cm = np.hypot(remaining_x_cm, remaining_y_cm)
+        ppc = self.config.global_.pixels_per_cm
 
+        if (
+            current_mode == MissionMode.NAVIGATION
+            and remaining_dist_cm > self.config.navigation.arrival_threshold_cm
+        ):
+            # Arrow to original mission target
+            direction = np.array([remaining_x_cm, -remaining_y_cm])
+            direction /= remaining_dist_cm
+            max_len = self.config.navigation.arrow_max_length_px
+            arrow_length_px = min(remaining_dist_cm * ppc, max_len)
+            end_point = center + (direction * arrow_length_px).astype(int)
+            end_point = (int(end_point[0]), int(end_point[1]))
+            cv2.arrowedLine(img, center, end_point, (255, 200, 0), 6, tipLength=0.3)
+
+            cv2.putText(
+                img,
+                f"Target: {remaining_dist_cm:.1f} cm",
+                (10, 120),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 200, 0),
+                2,
+            )
+
+        elif current_mode == MissionMode.LANDING_APPROACH:
+            if safe_center_px is not None:
                 cv2.putText(
                     img,
-                    f"Target: {remaining_dist_cm:.1f} cm",
+                    "APPROACHING SAFE SITE",
                     (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 200, 0),
+                    0.6,
+                    (0, 255, 255),
                     2,
                 )
-        else:
-            # Landing phase
-            if safe_center_px is not None:
-                cv2.circle(img, safe_center_px, 30, (0, 255, 0), 4)
-                cv2.circle(img, safe_center_px, 40, (0, 255, 0), 3)
             else:
-                warning_text = "NO SAFE LANDING ZONE"
-                text_size = cv2.getTextSize(
-                    warning_text, cv2.FONT_HERSHEY_DUPLEX, 1.5, 4
-                )[0]
-                text_x = (img.shape[1] - text_size[0]) // 2
-                text_y = img.shape[0] // 2
-
-                cv2.rectangle(
-                    img,
-                    (text_x - 20, text_y - text_size[1] - 20),
-                    (text_x + text_size[0] + 20, text_y + 20),
-                    (0, 0, 255),
-                    -1,
-                )
                 cv2.putText(
                     img,
-                    warning_text,
-                    (text_x, text_y),
-                    cv2.FONT_HERSHEY_DUPLEX,
-                    1.5,
-                    (255, 255, 255),
-                    4,
+                    "SEARCHING FOR SAFE SITE",
+                    (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 165, 255),
+                    2,
                 )
 
-        # Standard text overlays
+        elif current_mode == MissionMode.LANDED_SAFE:
+            cv2.putText(
+                img,
+                "MISSION COMPLETE",
+                (w // 2 - 180, h // 2 + 20),
+                cv2.FONT_HERSHEY_DUPLEX,
+                1.2,
+                (0, 255, 0),
+                4,
+            )
+
+        elif current_mode == MissionMode.NO_SAFE_ZONE:
+            warning_text = "NO SAFE LANDING ZONE FOUND"
+            text_size = cv2.getTextSize(warning_text, cv2.FONT_HERSHEY_DUPLEX, 1.0, 3)[
+                0
+            ]
+            text_x = (w - text_size[0]) // 2
+            text_y = h // 2 + 20
+            cv2.rectangle(
+                img,
+                (text_x - 20, text_y - text_size[1] - 20),
+                (text_x + text_size[0] + 20, text_y + 20),
+                (0, 0, 255),
+                -1,
+            )
+            cv2.putText(
+                img,
+                warning_text,
+                (text_x, text_y),
+                cv2.FONT_HERSHEY_DUPLEX,
+                1.0,
+                (255, 255, 255),
+                3,
+            )
+
+        # === Standard info overlays ===
         cv2.putText(
             img,
             f"Pos: ({pos_x:+.1f}, {pos_y:+.1f}) cm",
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.6,
             (255, 255, 255),
             2,
         )
@@ -164,7 +230,7 @@ class Visualizer:
             f"Features: {num_features}",
             (10, 60),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.6,
             (255, 255, 255),
             2,
         )
@@ -173,16 +239,16 @@ class Visualizer:
             f"Hazards: {np.sum(hazard_mask)}/{gs**2}",
             (10, 90),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.6,
             (255, 255, 255),
             2,
         )
         cv2.putText(
             img,
             "r = reset pos | q = quit",
-            (10, img.shape[0] - 20),
+            (10, h - 20),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.6,
             (200, 200, 200),
             2,
         )

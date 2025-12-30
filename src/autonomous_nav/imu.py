@@ -2,7 +2,6 @@ import os
 import qwiic_icm20948
 import numpy as np
 import time
-import sys
 from autonomous_nav.config import IMUConfig
 
 
