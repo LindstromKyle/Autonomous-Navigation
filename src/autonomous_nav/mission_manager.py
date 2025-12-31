@@ -19,7 +19,8 @@ class MissionManager:
 
         self.target_x_cm = config.navigation.target_offset_x_cm
         self.target_y_cm = config.navigation.target_offset_y_cm
-        self.arrival_threshold_cm = config.navigation.arrival_threshold_cm
+        self.arrival_inner_threshold_cm = config.navigation.arrival_inner_threshold_cm
+        self.arrival_outer_threshold_cm = config.navigation.arrival_outer_threshold_cm
         self.landed_threshold_cm = (
             15.0  # Distance to declare "very close" for landing confirmation
         )
@@ -43,6 +44,11 @@ class MissionManager:
         self.vel_tolerance_cm_s = config.navigation.vel_tolerance_cm_s
         self.hover_duration_s = config.navigation.hover_duration_s
 
+    def reset(self):
+        self.current_mode = MissionMode.NAVIGATION
+        self.previous_mode = None
+        self._reset_landing()
+
     def update(
         self,
         pos_x: float,
@@ -56,7 +62,8 @@ class MissionManager:
         remaining_dist_to_target = np.hypot(
             self.target_x_cm - pos_x, self.target_y_cm - pos_y
         )
-        near_target = remaining_dist_to_target < self.arrival_threshold_cm
+        inside_inner = remaining_dist_to_target < self.arrival_inner_threshold_cm
+        outside_outer = remaining_dist_to_target > self.arrival_outer_threshold_cm
         very_close = remaining_dist_to_target < self.landed_threshold_cm
 
         has_safe_spot = safe_center_px is not None
@@ -65,7 +72,7 @@ class MissionManager:
         new_mode = self.current_mode
 
         if self.current_mode == MissionMode.NAVIGATION:
-            if near_target:
+            if inside_inner:
                 if has_safe_spot:
                     self.safe_count += 1
                     self.no_safe_count = 0
@@ -86,7 +93,7 @@ class MissionManager:
                 self._reset_counters()
 
         elif self.current_mode == MissionMode.LANDING_APPROACH:
-            if not near_target:
+            if outside_outer:  # NEW: Use outer threshold to exit
                 self._reset_landing()
                 new_mode = MissionMode.NAVIGATION
             else:
@@ -124,7 +131,7 @@ class MissionManager:
                     # (not implemented here to keep lock stable)
 
         elif self.current_mode == MissionMode.NO_SAFE_ZONE:
-            if not near_target:
+            if outside_outer:  # NEW: Use outer threshold to exit
                 self._reset_landing()
                 new_mode = MissionMode.NAVIGATION
             elif has_safe_spot:
@@ -141,7 +148,7 @@ class MissionManager:
                 # Stay in NO_SAFE_ZONE
 
         elif self.current_mode == MissionMode.LANDED_SAFE:
-            if not near_target:
+            if outside_outer:  # NEW: Use outer threshold to exit
                 self._reset_landing()
                 new_mode = MissionMode.NAVIGATION
 

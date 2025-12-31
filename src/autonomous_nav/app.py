@@ -15,7 +15,7 @@ from autonomous_nav.imu import IMUModule
 from autonomous_nav.hazard_avoidance import ClearanceBasedHazardAvoidance
 from autonomous_nav.utils import pixels_to_cm
 from autonomous_nav.visualizer import Visualizer
-from autonomous_nav.mission_manager import MissionManager
+from autonomous_nav.mission_manager import MissionManager, MissionMode
 
 
 class AutonomousNavigationApp:
@@ -137,26 +137,48 @@ class AutonomousNavigationApp:
                 trail_mask = np.zeros_like(old_frame)
 
             # --- Planned route logic ---
+            # Always use the ORIGINAL target for determining landing phase entry/exit and search zone
+            remaining_dist_to_original = np.hypot(
+                position.remaining_x, position.remaining_y
+            )
+
+            # Default remaining for visualization (will override in landing if locked)
             remaining_x_cm = position.remaining_x
             remaining_y_cm = position.remaining_y
 
             target_px = None
+            outer_radius_cm = None
+
             if mission_manager.in_landing_phase:
+                # Search zone is ALWAYS centered on the original target
                 ppc = self.config.global_.pixels_per_cm
-                target_dx_px = remaining_x_cm * ppc
-                # Flip Y to align with physical coordinate system
-                target_dy_px = -remaining_y_cm * ppc
+                target_dx_px = position.remaining_x * ppc
+                target_dy_px = -position.remaining_y * ppc
                 frame_center_x = w // 2
                 frame_center_y = h // 2
                 target_px = (
                     int(frame_center_x + target_dx_px),
                     int(frame_center_y + target_dy_px),
                 )
+                outer_radius_cm = self.config.navigation.arrival_outer_threshold_cm
 
-            # Hazard detection with optional target bias
-            safe_dx_cm, safe_dy_cm, hazard_mask, safe_center_px = (
+                # But for visualization of arrow/text in LANDING_APPROACH, show distance to locked site if exists
+                if mission_manager.landing_target_x_cm is not None:
+                    remaining_x_cm = (
+                        mission_manager.landing_target_x_cm - position.pos_x
+                    )
+                    remaining_y_cm = (
+                        mission_manager.landing_target_y_cm - position.pos_y
+                    )
+                # Otherwise (e.g., NO_SAFE_ZONE), keep original remaining
+
+            safe_dx_cm, safe_dy_cm, hazard_mask, safe_center_px, weighted_map = (
                 hazard_detector.detect(
-                    valid_new_pts.reshape(-1, 2), h, w, target_px=target_px
+                    valid_new_pts.reshape(-1, 2),
+                    h,
+                    w,
+                    target_px=target_px,  # Fixed on original target
+                    outer_radius_cm=outer_radius_cm,
                 )
             )
 
@@ -171,7 +193,7 @@ class AutonomousNavigationApp:
                 safe_center_px,
             )
 
-            # Visualization
+            # Visualization — pass the correct remaining_x/y (now reflects locked site if applicable)
             annotated = visualizer.annotate_frame(
                 frame.copy(),
                 trail_mask,
@@ -183,7 +205,8 @@ class AutonomousNavigationApp:
                 safe_center_px,
                 remaining_x_cm,
                 remaining_y_cm,
-                current_mode,  # Changed
+                current_mode,
+                weighted_map,
             )
 
             cv2.imshow("Martian Rover Navigation", annotated)
@@ -196,7 +219,10 @@ class AutonomousNavigationApp:
                 break
             elif key == ord("r"):
                 position.reset()
-                print("Position reset")
+                mission_manager.reset()
+                trail_mask = np.zeros_like(frame)
+                old_features = feature_detector.detect_features(gray)  # Redetect fresh
+                print("Full system reset")
 
         camera.stop()
         cv2.destroyAllWindows()

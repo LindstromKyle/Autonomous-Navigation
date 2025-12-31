@@ -22,7 +22,7 @@ class PositionEstimator:
         # Navigation
         self.target_x = config.navigation.target_offset_x_cm
         self.target_y = config.navigation.target_offset_y_cm
-        self.arrival_threshold_cm = config.navigation.arrival_threshold_cm
+        self.arrival_inner_threshold_cm = config.navigation.arrival_inner_threshold_cm
 
     @property
     def remaining_x(self) -> float:
@@ -38,7 +38,7 @@ class PositionEstimator:
 
     @property
     def in_landing_mode(self) -> bool:
-        return self.remaining_distance < self.arrival_threshold_cm
+        return self.remaining_distance < self.arrival_inner_threshold_cm
 
     def predict(self, accel: np.array, dt: float):
         # Accel in cm/s² (convert from m/s²)

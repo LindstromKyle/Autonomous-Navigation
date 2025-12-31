@@ -7,6 +7,7 @@ from autonomous_nav.mission_manager import MissionMode
 class Visualizer:
     def __init__(self, config: AppConfig):
         self.config = config
+        self.ppc = config.global_.pixels_per_cm  # For consistent scaling
 
     def annotate_frame(
         self,
@@ -22,132 +23,99 @@ class Visualizer:
         remaining_x_cm: float,
         remaining_y_cm: float,
         current_mode: MissionMode,
+        weighted_map: np.ndarray | None = None,
     ) -> np.ndarray:
         img = frame.copy()
         h, w = frame.shape[:2]
+        center = np.array([w // 2, h // 2])
 
-        # Draw optical flow trails and current feature points
+        # Draw optical flow trails and points
         for new, old in zip(new_pts, old_pts):
             a, b = map(int, new.ravel())
             c, d = map(int, old.ravel())
             trail_mask = cv2.line(trail_mask, (a, b), (c, d), (0, 255, 200), 2)
             img = cv2.circle(img, (a, b), 5, (0, 0, 255), -1)
-
         img = cv2.add(img, trail_mask)
 
-        # === Hazard Grid: Red borders always drawn ===
-        gs = self.config.hazard.grid_size
-        ch, cw = h // gs, w // gs
-
-        # Temporary overlay for semi-transparent green safe fills
         overlay = img.copy()
 
-        # Always draw red grid borders on all cells
-        for r in range(gs):
-            for c in range(gs):
-                tl = (c * cw, r * ch)
-                br = ((c + 1) * cw, (r + 1) * ch)
-                cv2.rectangle(img, tl, br, (0, 0, 255), 2)
-
-        # Only fill safe cells with green during landing phases
+        # === Heatmap + Search Zone (only in landing phases) ===
         if current_mode in (
             MissionMode.LANDING_APPROACH,
             MissionMode.LANDED_SAFE,
             MissionMode.NO_SAFE_ZONE,
         ):
-            for r in range(gs):
-                for c in range(gs):
-                    if not hazard_mask[r, c]:
-                        tl_inset = (c * cw + 3, r * ch + 3)
-                        br_inset = ((c + 1) * cw - 3, (r + 1) * ch - 3)
-                        cv2.rectangle(overlay, tl_inset, br_inset, (0, 255, 0), -1)
+            # Re-compute original target projection here (safe, inside this block)
+            orig_target_x_cm = self.config.navigation.target_offset_x_cm
+            orig_target_y_cm = self.config.navigation.target_offset_y_cm
+            orig_remaining_x = orig_target_x_cm - pos_x
+            orig_remaining_y = orig_target_y_cm - pos_y
 
-            # Blend green fills with lower alpha (more transparent)
-            img = cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
+            target_px_x = w // 2 + int(orig_remaining_x * self.ppc)
+            target_px_y = h // 2 - int(orig_remaining_y * self.ppc)
+            target_px = (target_px_x, target_px_y)
 
-            # Bright green borders on safe cells
-            for r in range(gs):
-                for c in range(gs):
-                    if not hazard_mask[r, c]:
-                        tl = (c * cw, r * ch)
-                        br = ((c + 1) * cw, (r + 1) * ch)
-                        cv2.rectangle(img, tl, br, (0, 255, 0), 3)
-
-        # === Precise selected landing site marker — ONLY in landing phases ===
-        if (
-            current_mode
-            in (
-                MissionMode.LANDING_APPROACH,
-                MissionMode.LANDED_SAFE,
-                MissionMode.NO_SAFE_ZONE,
-            )
-            and safe_center_px is not None
-        ):
-            cx, cy = safe_center_px
-            cv2.circle(img, (cx, cy), 45, (0, 255, 0), 5)
-            cv2.circle(img, (cx, cy), 30, (0, 220, 0), -1)  # Solid inner circle
-            cv2.putText(
-                img,
-                "SAFE LANDING SITE",
-                (cx - 85, cy - 55),
-                cv2.FONT_HERSHEY_DUPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
+            outer_radius_px = int(
+                self.config.navigation.arrival_outer_threshold_cm * self.ppc
             )
 
-        # === Mode Indicator Text (top center) ===
-        if current_mode == MissionMode.NAVIGATION:
-            mode_text = "NAVIGATION MODE"
-            mode_color = (255, 200, 0)
-        elif current_mode == MissionMode.LANDING_APPROACH:
-            mode_text = "LANDING APPROACH"
-            mode_color = (0, 255, 255)
-        elif current_mode == MissionMode.LANDED_SAFE:
-            mode_text = "LANDED - SAFE"
-            mode_color = (0, 255, 0)
-        else:  # NO_SAFE_ZONE
-            mode_text = "NO SAFE ZONE"
-            mode_color = (0, 0, 255)
+            if weighted_map is not None:
+                if np.max(weighted_map) > 0:
+                    min_nonzero = np.min(weighted_map[weighted_map > 0])
+                    # Set zeros to just below min_nonzero (e.g., 99% of it for a small delta)
+                    weighted_map[weighted_map == 0] = min_nonzero * 0.99
+                    # If all zero, heatmap will normalize to flat zero (no contrast, which is fine)
 
-        text_size = cv2.getTextSize(mode_text, cv2.FONT_HERSHEY_DUPLEX, 0.8, 3)[0]
-        text_x = (w - text_size[0]) // 2
-        text_y = 30
-        cv2.rectangle(
-            img,
-            (text_x - 10, text_y - text_size[1] - 10),
-            (text_x + text_size[0] + 10, text_y + 10),
-            (0, 0, 0),
-            -1,
-        )
-        cv2.putText(
-            img,
-            mode_text,
-            (text_x, text_y),
-            cv2.FONT_HERSHEY_DUPLEX,
-            0.8,
-            mode_color,
-            3,
-        )
+                norm_map = cv2.normalize(weighted_map, None, 0, 255, cv2.NORM_MINMAX)
+                norm_map = norm_map.astype(np.uint8)
+                heatmap = cv2.applyColorMap(norm_map, cv2.COLORMAP_VIRIDIS)
+                alpha = 0.35
+                mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.circle(mask, target_px, outer_radius_px, 255, -1)
+                heatmap_masked = cv2.bitwise_and(heatmap, heatmap, mask=mask)
 
-        # === Mode-specific additional visuals and text ===
-        center = (w // 2, h // 2)
+                cv2.addWeighted(heatmap_masked, alpha, overlay, 1 - alpha, 0, overlay)
+
+            # Faint grid (unchanged)
+            gs = self.config.hazard.grid_size
+            ch, cw = h // gs, w // gs
+            for r in range(gs):
+                for c in range(gs):
+                    tl = (c * cw, r * ch)
+                    br = ((c + 1) * cw, (r + 1) * ch)
+                    cv2.rectangle(overlay, tl, br, (50, 50, 50), 1)
+
+            img = overlay
+
+            # Search radius circle (centered on original target)
+            cv2.circle(img, target_px, outer_radius_px, (0, 255, 0), 4)
+
+            # Safe site marker (already inside landing phase block)
+            if safe_center_px is not None:
+                cv2.drawMarker(
+                    img, safe_center_px, (0, 255, 0), cv2.MARKER_CROSS, 40, 1
+                )
+
         remaining_dist_cm = np.hypot(remaining_x_cm, remaining_y_cm)
-        ppc = self.config.global_.pixels_per_cm
 
+        # Navigation arrow (only in pure navigation mode)
         if (
             current_mode == MissionMode.NAVIGATION
-            and remaining_dist_cm > self.config.navigation.arrival_threshold_cm
+            and remaining_dist_cm > self.config.navigation.arrival_inner_threshold_cm
         ):
-            # Arrow to original mission target
             direction = np.array([remaining_x_cm, -remaining_y_cm])
             direction /= remaining_dist_cm
             max_len = self.config.navigation.arrow_max_length_px
-            arrow_length_px = min(remaining_dist_cm * ppc, max_len)
+            arrow_length_px = min(remaining_dist_cm * self.ppc, max_len)
             end_point = center + (direction * arrow_length_px).astype(int)
-            end_point = (int(end_point[0]), int(end_point[1]))
-            cv2.arrowedLine(img, center, end_point, (255, 200, 0), 6, tipLength=0.3)
-
+            cv2.arrowedLine(
+                img,
+                tuple(center.astype(int)),
+                tuple(map(int, end_point)),
+                (255, 200, 0),
+                6,
+                tipLength=0.3,
+            )
             cv2.putText(
                 img,
                 f"Target: {remaining_dist_cm:.1f} cm",
@@ -215,7 +183,7 @@ class Visualizer:
                 3,
             )
 
-        # === Standard info overlays ===
+        # Standard info
         cv2.putText(
             img,
             f"Pos: ({pos_x:+.1f}, {pos_y:+.1f}) cm",
@@ -236,7 +204,7 @@ class Visualizer:
         )
         cv2.putText(
             img,
-            f"Hazards: {np.sum(hazard_mask)}/{gs**2}",
+            f"Hazards: {np.sum(hazard_mask)}/{self.config.hazard.grid_size**2}",
             (10, 90),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,

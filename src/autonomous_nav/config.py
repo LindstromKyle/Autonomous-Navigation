@@ -25,7 +25,7 @@ class PreprocessorConfig:
 @dataclass
 class FeatureDetectorConfig:
     max_corners: int = 300
-    quality_level: float = 0.1
+    quality_level: float = 0.2
     min_distance: int = 7
     block_size: int = 7
 
@@ -51,7 +51,8 @@ class IMUConfig:
 class NavigationConfig:
     target_offset_x_cm: float = 10.0
     target_offset_y_cm: float = 0.0
-    arrival_threshold_cm: float = 2.0
+    arrival_inner_threshold_cm: float = 2.0
+    arrival_outer_threshold_cm: float = 10.0
     arrow_max_length_px: int = 250
 
     hover_duration_s: float = 2.0  # Time to hover within tolerance for landed
@@ -66,7 +67,7 @@ class HazardConfig:
     threshold: int = 2
     exclude_boundaries: bool = True
 
-    min_clearance_cm: int = 5  # Minimum distance to hazard for a spot to be safe
+    min_clearance_cm: int = 4  # Minimum distance to hazard for a spot to be safe
     hazard_dilation_px: int = 5  # Dilate features to represent hazard radius
     proximity_bias_weight: float = 0.5  # Weight for target proximity in selection (0-1)
 
