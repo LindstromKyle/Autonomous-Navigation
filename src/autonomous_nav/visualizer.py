@@ -24,18 +24,37 @@ class Visualizer:
         remaining_y_cm: float,
         current_mode: MissionMode,
         weighted_map: np.ndarray | None = None,
+        hazard_points: np.ndarray | None = None,
     ) -> np.ndarray:
         img = frame.copy()
         h, w = frame.shape[:2]
         center = np.array([w // 2, h // 2])
 
-        # Draw optical flow trails and points
+        # Draw points
+        for pt in new_pts:
+            x, y = map(int, pt.ravel())
+            cv2.circle(img, (x, y), 4, (0, 0, 255), -1)
+
+        # Draw new trails
         for new, old in zip(new_pts, old_pts):
             a, b = map(int, new.ravel())
             c, d = map(int, old.ravel())
-            trail_mask = cv2.line(trail_mask, (a, b), (c, d), (0, 255, 200), 2)
-            img = cv2.circle(img, (a, b), 5, (0, 0, 255), -1)
-        img = cv2.add(img, trail_mask)
+            cv2.line(trail_mask, (a, b), (c, d), (0, 255, 200), 2)
+
+        # Blend
+        img = cv2.addWeighted(img, 1.0, trail_mask, 0.15, 0)
+
+        if hazard_points is not None and len(hazard_points) > 0:
+            for pt in hazard_points:
+                x, y = map(int, pt.ravel())
+                # Larger, semi-transparent magenta circle with white border
+                cv2.circle(img, (x, y), 10, (255, 0, 255), 2)  # Magenta outline
+                cv2.circle(
+                    img, (x, y), 8, (255, 0, 255), -1, cv2.LINE_AA
+                )  # Filled, anti-aliased
+                cv2.circle(
+                    img, (x, y), 10, (255, 255, 255), 1
+                )  # Thin white border for contrast
 
         overlay = img.copy()
 

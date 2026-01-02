@@ -3,24 +3,20 @@ import numpy as np
 import os
 from tqdm import tqdm
 
-# Directories (adjust paths)
-IMAGE_DIR = "/home/kyle/marsdata_v2/training/images"  # Folder with original RGB images
-MASK_DIR = "/home/kyle/marsdata_v2/training/masks"  # Folder with yellow-on-black masks
+# Directories
+IMAGE_DIR = "/home/kyle/marsdata_v2/raw_marsdata_v2/images"
+MASK_DIR = "/home/kyle/marsdata_v2/raw_marsdata_v2/masks"
 OUTPUT_IMG_DIR = "/home/kyle/marsdata_v2/yolo_dataset/images/train/"
 OUTPUT_LBL_DIR = "/home/kyle/marsdata_v2/yolo_dataset/labels/train/"
 
 os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
 os.makedirs(OUTPUT_LBL_DIR, exist_ok=True)
 
-image_files = sorted(
-    [f for f in os.listdir(IMAGE_DIR) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
-)
+image_files = sorted([f for f in os.listdir(IMAGE_DIR) if f.lower().endswith((".png"))])
 
 for img_file in tqdm(image_files):
     img_path = os.path.join(IMAGE_DIR, img_file)
-    mask_path = os.path.join(
-        MASK_DIR, img_file.replace(".jpg", ".png")
-    )  # Adjust extension if needed
+    mask_path = os.path.join(MASK_DIR, img_file)
 
     img = cv2.imread(img_path)
     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
@@ -30,7 +26,7 @@ for img_file in tqdm(image_files):
         continue
 
     h, w = mask.shape
-    # Threshold yellow mask (assuming yellow is bright)
+    # Threshold the mask
     _, binary = cv2.threshold(mask, 50, 255, cv2.THRESH_BINARY)
 
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -38,8 +34,6 @@ for img_file in tqdm(image_files):
     label_lines = []
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # if area < 50:  # Filter tiny noise
-        #     continue
         x, y, bw, bh = cv2.boundingRect(cnt)
         center_x = (x + bw / 2) / w
         center_y = (y + bh / 2) / h

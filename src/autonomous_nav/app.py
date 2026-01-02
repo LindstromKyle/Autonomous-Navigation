@@ -12,10 +12,13 @@ from autonomous_nav.feature_detector import ShiTomasiDetector
 from autonomous_nav.optical_flow import OpticalFlowModule
 from autonomous_nav.position_estimator import PositionEstimator
 from autonomous_nav.imu import IMUModule
-from autonomous_nav.hazard_avoidance import ClearanceBasedHazardAvoidance
+from autonomous_nav.hazard_avoidance import (
+    ClearanceBasedHazardAvoidance,
+    AIHazardAvoidance,
+)
 from autonomous_nav.utils import pixels_to_cm
 from autonomous_nav.visualizer import Visualizer
-from autonomous_nav.mission_manager import MissionManager, MissionMode
+from autonomous_nav.mission_manager import MissionManager
 
 
 class AutonomousNavigationApp:
@@ -172,15 +175,33 @@ class AutonomousNavigationApp:
                     )
                 # Otherwise (e.g., NO_SAFE_ZONE), keep original remaining
 
-            safe_dx_cm, safe_dy_cm, hazard_mask, safe_center_px, weighted_map = (
-                hazard_detector.detect(
-                    valid_new_pts.reshape(-1, 2),
-                    h,
-                    w,
-                    target_px=target_px,  # Fixed on original target
-                    outer_radius_cm=outer_radius_cm,
+                """HACK FOR BLURRING YOLO FRAMES
+                blur = GaussianBlurPreprocessor(self.config.preprocessor)
+                channels = cv2.split(frame)
+                blurred_channels = [blur.process(ch) for ch in channels]
+                processed = cv2.merge(blurred_channels)"""
+
+                safe_dx_cm, safe_dy_cm, hazard_mask, safe_center_px, weighted_map = (
+                    hazard_detector.compute_safe_zone(
+                        valid_new_pts.reshape(-1, 2),
+                        h,
+                        w,
+                        target_px=target_px,  # Fixed on original target
+                        outer_radius_cm=outer_radius_cm,
+                        frame=frame,
+                    )
                 )
-            )
+                hazard_points = hazard_detector.hazard_points
+
+            else:
+                safe_dx_cm = safe_dy_cm = None
+                safe_center_px = None
+                hazard_mask = np.zeros(
+                    (self.config.hazard.grid_size, self.config.hazard.grid_size),
+                    dtype=bool,
+                )
+                weighted_map = None
+                hazard_points = None
 
             # Update mission mode
             current_mode = mission_manager.update(
@@ -207,6 +228,7 @@ class AutonomousNavigationApp:
                 remaining_y_cm,
                 current_mode,
                 weighted_map,
+                hazard_points,
             )
 
             cv2.imshow("Martian Rover Navigation", annotated)

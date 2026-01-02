@@ -18,8 +18,8 @@ class PreprocessorConfig:
     clahe_tile_grid_size: Tuple[int, int] = (8, 8)
 
     gaussian_blur_enabled: bool = False
-    gaussian_ksize: Tuple[int, int] = (3, 3)
-    gaussian_sigma: float = 0.0
+    gaussian_ksize: Tuple[int, int] = (11, 11)  # (3, 3)
+    gaussian_sigma: float = 2.0
 
 
 @dataclass
