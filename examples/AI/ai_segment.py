@@ -13,7 +13,7 @@ INPUT_SIZE = 320
 
 # NEW: Preprocessing options
 FORCE_RGB_CONVERSION = False  # Always convert frame to RGB before inference
-APPLY_CLAHE_PER_CHANNEL = True  # Apply CLAHE independently on R, G, B channels
+APPLY_CLAHE_PER_CHANNEL = False  # Apply CLAHE independently on R, G, B channels
 PREPROCESSOR_CONFIG = PreprocessorConfig()
 # ===========================================
 
@@ -54,26 +54,26 @@ def main():
     print("Camera started. Loading YOLOv8 detection model...")
 
     model = YOLO(
-        "/home/kyle/repos/Autonomous-Navigation/examples/AI/full_marsdata_grayscale.pt"
+        "/home/kyle/repos/Autonomous-Navigation/examples/AI/full_marsdata_v2.pt"
     )
     print("Model loaded. Starting live detection (press 'q' to quit)")
 
     # Warm up model
-    # dummy = np.zeros((INPUT_SIZE, INPUT_SIZE, 3), dtype=np.uint8)
-    dummy = np.zeros((INPUT_SIZE, INPUT_SIZE), dtype=np.uint8)
+    dummy = np.zeros((INPUT_SIZE, INPUT_SIZE, 3), dtype=np.uint8)
+    # dummy = np.zeros((INPUT_SIZE, INPUT_SIZE), dtype=np.uint8)
 
     model(dummy, imgsz=INPUT_SIZE, verbose=False)
 
     prev_time = time.time()
     while True:
         frame = picam2.capture_array()  # Shape: (H, W, 3), RGB888
-        gray_raw = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        gray = preprocessor.process(gray_raw)
+        # gray_raw = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        # gray = preprocessor.process(gray_raw)
         # === Preprocess frame according to config ===
         # input_frame = preprocess_frame(frame)
 
         # Run inference
-        results = model(gray, imgsz=INPUT_SIZE, conf=0.005, verbose=False)[0]
+        results = model(frame, imgsz=INPUT_SIZE, conf=0.005, verbose=False)[0]
 
         # Draw bounding boxes on original frame (for clean visualization)
         overlay = frame.copy()

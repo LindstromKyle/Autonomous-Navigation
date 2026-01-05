@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from autonomous_nav.config import AppConfig
 from autonomous_nav.camera import CameraModule
+from autonomous_nav.lidar import LidarModule
 from autonomous_nav.preprocessor import (
     PreprocessorPipeline,
     CLAHEPreprocessor,
@@ -10,12 +11,9 @@ from autonomous_nav.preprocessor import (
 )
 from autonomous_nav.feature_detector import ShiTomasiDetector
 from autonomous_nav.optical_flow import OpticalFlowModule
-from autonomous_nav.position_estimator import PositionEstimator
+from autonomous_nav.state_estimator import StateEstimator
 from autonomous_nav.imu import IMUModule
-from autonomous_nav.hazard_avoidance import (
-    ClearanceBasedHazardAvoidance,
-    AIHazardAvoidance,
-)
+from autonomous_nav.hazard_avoidance import ClearanceBasedHazardAvoidance
 from autonomous_nav.utils import pixels_to_cm
 from autonomous_nav.visualizer import Visualizer
 from autonomous_nav.mission_manager import MissionManager
@@ -40,9 +38,11 @@ class AutonomousNavigationApp:
 
         feature_detector = ShiTomasiDetector(self.config.feature_detector)
         optical_flow = OpticalFlowModule(self.config.optical_flow)
+        state = StateEstimator(self.config)
         imu = IMUModule(self.config.imu)
-
-        position = PositionEstimator(self.config)
+        state.state[6:10] = imu.init_quat.copy()
+        state.normalize_quaternion()
+        lidar = LidarModule(self.config.lidar)
         hazard_detector = ClearanceBasedHazardAvoidance(self.config.hazard, self.config)
         visualizer = Visualizer(self.config)
 
@@ -63,9 +63,6 @@ class AutonomousNavigationApp:
         frame_count = 0
 
         print("\n=== Martian Rover Navigation ===")
-
-        target_predict_rate = self.config.imu.target_predict_rate
-        min_update_threshold = self.config.global_.min_features // 2
 
         imu.last_time = time.time()
 
@@ -97,37 +94,29 @@ class AutonomousNavigationApp:
                 old_features,
             )
 
-            # High-rate IMU prediction
-            num_predict_steps = max(1, int(frame_dt * target_predict_rate))
-            successful_predicts = 0
-            for _ in range(num_predict_steps):
-                imu_data = imu.read()
-                if imu_data and imu_data["dt"] > 0:
-                    position.predict(imu_data["accel"], imu_data["dt"])
-                    successful_predicts += 1
-            if successful_predicts == 0 and frame_dt > 0:
-                position.predict(np.zeros(3), frame_dt)
+            # IMU predict state
+            imu_data = imu.read()
+            if imu_data:
+                state.predict(imu_data["accel"], imu_data["gyro"], imu_data["dt"])
 
             # Visual velocity update
-            if frame_dt > 0:
-                vis_vel_x = (
-                    -pixels_to_cm(flow_dx_px, self.config.global_.pixels_per_cm)
-                    / frame_dt
-                )
-                vis_vel_y = (
-                    pixels_to_cm(flow_dy_px, self.config.global_.pixels_per_cm)
-                    / frame_dt
-                )
+            vis_vel_x = (
+                -pixels_to_cm(flow_dx_px, self.config.global_.pixels_per_cm) / frame_dt
+            )
+            vis_vel_y = (
+                pixels_to_cm(flow_dy_px, self.config.global_.pixels_per_cm) / frame_dt
+            )
+            flow_mag = np.hypot(vis_vel_x, vis_vel_y)
+            if flow_mag < 0.5 and len(valid_new_pts) > 20:
+                # Zero-Velocity Update (ZUPT)
+                state.update_visual(0.0, 0.0)  # Forces velocity toward zero
             else:
-                vis_vel_x = vis_vel_y = 0.0
+                state.update_visual(vis_vel_x, vis_vel_y)
 
-            if len(valid_new_pts) >= min_update_threshold:
-                position.update(vis_vel_x, vis_vel_y)
-            else:
-                if frame_count % 30 == 0:
-                    print(
-                        f"Low features ({len(valid_new_pts)}), skipping visual update — relying on IMU"
-                    )
+            # Lidar range update
+            lidar_data = lidar.read()
+            if lidar_data:
+                state.update_lidar(lidar_data["distance_cm"])
 
             old_features = valid_new_pts if valid_new_pts.size > 0 else None
 
@@ -139,15 +128,9 @@ class AutonomousNavigationApp:
                 old_features = feature_detector.detect_features(gray)
                 trail_mask = np.zeros_like(old_frame)
 
-            # --- Planned route logic ---
-            # Always use the ORIGINAL target for determining landing phase entry/exit and search zone
-            remaining_dist_to_original = np.hypot(
-                position.remaining_x, position.remaining_y
-            )
-
             # Default remaining for visualization (will override in landing if locked)
-            remaining_x_cm = position.remaining_x
-            remaining_y_cm = position.remaining_y
+            remaining_x_cm = state.remaining_x
+            remaining_y_cm = state.remaining_y
 
             target_px = None
             outer_radius_cm = None
@@ -155,8 +138,8 @@ class AutonomousNavigationApp:
             if mission_manager.in_landing_phase:
                 # Search zone is ALWAYS centered on the original target
                 ppc = self.config.global_.pixels_per_cm
-                target_dx_px = position.remaining_x * ppc
-                target_dy_px = -position.remaining_y * ppc
+                target_dx_px = state.remaining_x * ppc
+                target_dy_px = -state.remaining_y * ppc
                 frame_center_x = w // 2
                 frame_center_y = h // 2
                 target_px = (
@@ -168,20 +151,14 @@ class AutonomousNavigationApp:
                 # But for visualization of arrow/text in LANDING_APPROACH, show distance to locked site if exists
                 if mission_manager.landing_target_x_cm is not None:
                     remaining_x_cm = (
-                        mission_manager.landing_target_x_cm - position.pos_x
+                        mission_manager.landing_target_x_cm - state.position[0]
                     )
                     remaining_y_cm = (
-                        mission_manager.landing_target_y_cm - position.pos_y
+                        mission_manager.landing_target_y_cm - state.position[1]
                     )
                 # Otherwise (e.g., NO_SAFE_ZONE), keep original remaining
 
-                """HACK FOR BLURRING YOLO FRAMES
-                blur = GaussianBlurPreprocessor(self.config.preprocessor)
-                channels = cv2.split(frame)
-                blurred_channels = [blur.process(ch) for ch in channels]
-                processed = cv2.merge(blurred_channels)"""
-
-                safe_dx_cm, safe_dy_cm, hazard_mask, safe_center_px, weighted_map = (
+                safe_dx_cm, safe_dy_cm, safe_center_px, weighted_map = (
                     hazard_detector.compute_safe_zone(
                         valid_new_pts.reshape(-1, 2),
                         h,
@@ -196,33 +173,28 @@ class AutonomousNavigationApp:
             else:
                 safe_dx_cm = safe_dy_cm = None
                 safe_center_px = None
-                hazard_mask = np.zeros(
-                    (self.config.hazard.grid_size, self.config.hazard.grid_size),
-                    dtype=bool,
-                )
                 weighted_map = None
                 hazard_points = None
 
             # Update mission mode
             current_mode = mission_manager.update(
-                position.pos_x,
-                position.pos_y,
-                position.vel_x,
-                position.vel_y,
+                state.position[0],
+                state.position[1],
+                state.velocity[0],
+                state.velocity[1],
                 safe_dx_cm,
                 safe_dy_cm,
                 safe_center_px,
             )
 
-            # Visualization — pass the correct remaining_x/y (now reflects locked site if applicable)
+            # Visualization
             annotated = visualizer.annotate_frame(
                 frame.copy(),
                 trail_mask,
                 valid_new_pts.reshape(-1, 2),
                 valid_old_pts.reshape(-1, 2),
-                *position.position,
+                state,
                 len(valid_new_pts),
-                hazard_mask,
                 safe_center_px,
                 remaining_x_cm,
                 remaining_y_cm,
@@ -240,11 +212,12 @@ class AutonomousNavigationApp:
             if key == ord("q"):
                 break
             elif key == ord("r"):
-                position.reset()
+                state.reset()
                 mission_manager.reset()
                 trail_mask = np.zeros_like(frame)
                 old_features = feature_detector.detect_features(gray)  # Redetect fresh
                 print("Full system reset")
 
         camera.stop()
+        lidar.stop()
         cv2.destroyAllWindows()

@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 from autonomous_nav.config import AppConfig
 from autonomous_nav.mission_manager import MissionMode
 
@@ -15,10 +16,8 @@ class Visualizer:
         trail_mask: np.ndarray,
         new_pts: np.ndarray,
         old_pts: np.ndarray,
-        pos_x: float,
-        pos_y: float,
+        state: np.ndarray,
         num_features: int,
-        hazard_mask: np.ndarray,
         safe_center_px: tuple[int, int] | None,
         remaining_x_cm: float,
         remaining_y_cm: float,
@@ -29,6 +28,10 @@ class Visualizer:
         img = frame.copy()
         h, w = frame.shape[:2]
         center = np.array([w // 2, h // 2])
+
+        pos_x = state.position[0]
+        pos_y = state.position[1]
+        pos_z = state.position[2]
 
         # Draw points
         for pt in new_pts:
@@ -205,25 +208,33 @@ class Visualizer:
         # Standard info
         cv2.putText(
             img,
-            f"Pos: ({pos_x:+.1f}, {pos_y:+.1f}) cm",
+            f"Pos: ({pos_x:+.1f}, {pos_y:+.1f}, {pos_z:.1f}) cm",
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             (255, 255, 255),
             2,
         )
+        print(f"DEBUG - POSITION = {state.position}")
+        # Add orientation display: Convert quaternion to Euler angles (roll, pitch, yaw in degrees)
+        q = state.state[6:10]  # [q_w, q_x, q_y, q_z]
+        rot = R.from_quat([q[1], q[2], q[3], q[0]])  # SciPy expects [x, y, z, w]
+        euler_deg = rot.as_euler("xyz", degrees=True)  # Roll (x), Pitch (y), Yaw (z)
         cv2.putText(
             img,
-            f"Features: {num_features}",
+            f"Att: R:{euler_deg[0]:+.1f} P:{euler_deg[1]:+.1f} Y:{euler_deg[2]:+.1f} deg",
             (10, 60),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             (255, 255, 255),
             2,
         )
+        print(
+            f"DEBUG - EULER = R:{euler_deg[0]:+.1f} P:{euler_deg[1]:+.1f} Y:{euler_deg[2]:+.1f} deg"
+        )
         cv2.putText(
             img,
-            f"Hazards: {np.sum(hazard_mask)}/{self.config.hazard.grid_size**2}",
+            f"Features: {num_features}",
             (10, 90),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,

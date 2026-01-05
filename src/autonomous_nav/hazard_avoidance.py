@@ -90,24 +90,7 @@ class HazardAvoidance(ABC):
             safe_center_px = None
             dx_cm = dy_cm = None
 
-        # Grid hazard mask for visualization/stats
-        hazard_mask = np.zeros((gs, gs), dtype=bool)
-        for r in range(gs):
-            for c in range(gs):
-                y_start, y_end = r * ch, (r + 1) * ch
-                x_start, x_end = c * cw, (c + 1) * cw
-                if (
-                    np.mean(dist_map[y_start:y_end, x_start:x_end])
-                    < self.min_clearance_px
-                ):
-                    hazard_mask[r, c] = True
-
-        if self.config.exclude_boundaries and gs > 2:
-            hazard_mask[0, :] = hazard_mask[-1, :] = hazard_mask[:, 0] = hazard_mask[
-                :, -1
-            ] = True
-
-        return dx_cm, dy_cm, hazard_mask, safe_center_px, weighted_map
+        return dx_cm, dy_cm, safe_center_px, weighted_map
 
 
 class ClearanceBasedHazardAvoidance(HazardAvoidance):

@@ -43,8 +43,14 @@ class IMUConfig:
     gyro_sensitivity: float = 131.0
     mag_sensitivity: float = 0.15
     bias_calibration_samples: int = 100
-    target_predict_rate: int = 100
     bias_file = "/home/kyle/repos/Autonomous-Navigation/examples/imu_biases.npz"
+
+
+@dataclass
+class LidarConfig:
+    distance_mode: int = 1
+    timing_budget: int = 50
+    cache_measurements: int = 5
 
 
 @dataclass
@@ -81,5 +87,6 @@ class AppConfig:
     )
     optical_flow: OpticalFlowConfig = field(default_factory=OpticalFlowConfig)
     imu: IMUConfig = field(default_factory=IMUConfig)
+    lidar: LidarConfig = field(default_factory=LidarConfig)
     navigation: NavigationConfig = field(default_factory=NavigationConfig)
     hazard: HazardConfig = field(default_factory=HazardConfig)
