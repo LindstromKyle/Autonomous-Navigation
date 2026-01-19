@@ -31,8 +31,8 @@ class HazardAvoidance(ABC):
         features: np.ndarray,
         frame_height: int,
         frame_width: int,
-        target_px: tuple[int, int] | None = None,
-        outer_radius_cm: float | None = None,
+        search_zone_center: tuple[int, int] | None = None,
+        search_zone_outer_thresh: float | None = None,
         frame: np.ndarray | None = None,
     ) -> tuple[
         float | None, float | None, np.ndarray, tuple[int, int] | None, np.ndarray
@@ -66,10 +66,12 @@ class HazardAvoidance(ABC):
 
         # Search zone mask
         search_mask = np.ones((frame_height, frame_width), dtype=bool)
-        if outer_radius_cm is not None and target_px is not None:
-            outer_radius_px = int(outer_radius_cm * self.pixels_per_cm + 0.5)
+        if search_zone_outer_thresh is not None and search_zone_center is not None:
+            outer_radius_px = int(search_zone_outer_thresh * self.pixels_per_cm + 0.5)
             cy, cx = np.ogrid[:frame_height, :frame_width]
-            dist_sq = (cx - target_px[0]) ** 2 + (cy - target_px[1]) ** 2
+            dist_sq = (cx - search_zone_center[0]) ** 2 + (
+                cy - search_zone_center[1]
+            ) ** 2
             search_mask = dist_sq <= outer_radius_px**2
 
         # Weighted safety map
@@ -85,7 +87,7 @@ class HazardAvoidance(ABC):
             dx_px = safe_x - frame_width // 2
             dy_px = safe_y - frame_height // 2
             dx_cm = pixels_to_cm(dx_px, self.pixels_per_cm)
-            dy_cm = pixels_to_cm(dy_px, self.pixels_per_cm)
+            dy_cm = -pixels_to_cm(dy_px, self.pixels_per_cm)
         else:
             safe_center_px = None
             dx_cm = dy_cm = None

@@ -39,9 +39,7 @@ class AutonomousNavigationApp:
         feature_detector = ShiTomasiDetector(self.config.feature_detector)
         optical_flow = OpticalFlowModule(self.config.optical_flow)
         state = StateEstimator(self.config)
-        imu = IMUModule(self.config.imu)
-        state.state[6:10] = imu.init_quat.copy()
-        state.normalize_quaternion()
+
         lidar = LidarModule(self.config.lidar)
         hazard_detector = ClearanceBasedHazardAvoidance(self.config.hazard, self.config)
         visualizer = Visualizer(self.config)
@@ -51,6 +49,10 @@ class AutonomousNavigationApp:
 
         # Preview countdown
         camera.run_countdown_preview()
+
+        # imu = IMUModule(self.config.imu)
+        # state.state[6:10] = imu.init_quat.copy()
+        # state.normalize_quaternion()
 
         # Initial frame and features
         old_frame = camera.capture_frame()
@@ -64,11 +66,11 @@ class AutonomousNavigationApp:
 
         print("\n=== Martian Rover Navigation ===")
 
-        imu.last_time = time.time()
-
+        # imu.last_time = time.time()
+        time.sleep(0.02)
         while True:
             current_time = time.time()
-            frame_dt = current_time - last_frame_time
+            frame_dt = max(current_time - last_frame_time, 0.025)
 
             frame = camera.capture_frame()
             gray_raw = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
@@ -95,9 +97,10 @@ class AutonomousNavigationApp:
             )
 
             # IMU predict state
-            imu_data = imu.read()
-            if imu_data:
-                state.predict(imu_data["accel"], imu_data["gyro"], imu_data["dt"])
+            # imu_data = imu.read()
+            # if imu_data:
+            #     state.predict(imu_data["accel"], imu_data["gyro"], imu_data["dt"])
+            state.predict(frame_dt)
 
             # Visual velocity update
             vis_vel_x = (
@@ -128,53 +131,55 @@ class AutonomousNavigationApp:
                 old_features = feature_detector.detect_features(gray)
                 trail_mask = np.zeros_like(old_frame)
 
-            # Default remaining for visualization (will override in landing if locked)
-            remaining_x_cm = state.remaining_x
-            remaining_y_cm = state.remaining_y
-
-            target_px = None
-            outer_radius_cm = None
+            dx_to_search_center = state.dx_to_search_center
+            dy_to_search_center = state.dy_to_search_center
 
             if mission_manager.in_landing_phase:
                 # Search zone is ALWAYS centered on the original target
                 ppc = self.config.global_.pixels_per_cm
-                target_dx_px = state.remaining_x * ppc
-                target_dy_px = -state.remaining_y * ppc
+                dx_to_search_center = state.dx_to_search_center * ppc
+                dy_to_search_center = -state.dy_to_search_center * ppc
                 frame_center_x = w // 2
                 frame_center_y = h // 2
-                target_px = (
-                    int(frame_center_x + target_dx_px),
-                    int(frame_center_y + target_dy_px),
+                search_zone_center = (
+                    int(frame_center_x + dx_to_search_center),
+                    int(frame_center_y + dy_to_search_center),
                 )
-                outer_radius_cm = self.config.navigation.arrival_outer_threshold_cm
+                search_zone_outer_thresh = (
+                    self.config.navigation.search_zone_outer_thresh
+                )
 
-                # But for visualization of arrow/text in LANDING_APPROACH, show distance to locked site if exists
-                if mission_manager.landing_target_x_cm is not None:
-                    remaining_x_cm = (
-                        mission_manager.landing_target_x_cm - state.position[0]
-                    )
-                    remaining_y_cm = (
-                        mission_manager.landing_target_y_cm - state.position[1]
-                    )
-                # Otherwise (e.g., NO_SAFE_ZONE), keep original remaining
-
-                safe_dx_cm, safe_dy_cm, safe_center_px, weighted_map = (
-                    hazard_detector.compute_safe_zone(
-                        valid_new_pts.reshape(-1, 2),
-                        h,
-                        w,
-                        target_px=target_px,  # Fixed on original target
-                        outer_radius_cm=outer_radius_cm,
-                        frame=frame,
-                    )
+                (
+                    current_frame_safe_dx,
+                    current_frame_safe_dy,
+                    current_frame_safe_px,
+                    weighted_map,
+                ) = hazard_detector.compute_safe_zone(
+                    valid_new_pts.reshape(-1, 2),
+                    h,
+                    w,
+                    search_zone_center=search_zone_center,
+                    search_zone_outer_thresh=search_zone_outer_thresh,
+                    frame=frame,
                 )
                 hazard_points = hazard_detector.hazard_points
 
             else:
-                safe_dx_cm = safe_dy_cm = None
-                safe_center_px = None
+                current_frame_safe_dx = current_frame_safe_dy = None
+                current_frame_safe_px = None
                 weighted_map = None
                 hazard_points = None
+
+            if mission_manager.locked_landing_target_x_cm is not None:
+                dx_to_locked_landing_target_cm = (
+                    mission_manager.locked_landing_target_x_cm - state.position[0]
+                )
+                dy_to_locked_landing_target_cm = (
+                    mission_manager.locked_landing_target_y_cm - state.position[1]
+                )
+            else:
+                dx_to_locked_landing_target_cm = None
+                dy_to_locked_landing_target_cm = None
 
             # Update mission mode
             current_mode = mission_manager.update(
@@ -182,10 +187,12 @@ class AutonomousNavigationApp:
                 state.position[1],
                 state.velocity[0],
                 state.velocity[1],
-                safe_dx_cm,
-                safe_dy_cm,
-                safe_center_px,
+                current_frame_safe_dx,
+                current_frame_safe_dy,
+                current_frame_safe_px,
             )
+            is_hovering = mission_manager.is_hovering()
+            hover_remaining = mission_manager.get_hover_remaining_s()
 
             # Visualization
             annotated = visualizer.annotate_frame(
@@ -195,12 +202,15 @@ class AutonomousNavigationApp:
                 valid_old_pts.reshape(-1, 2),
                 state,
                 len(valid_new_pts),
-                safe_center_px,
-                remaining_x_cm,
-                remaining_y_cm,
+                dx_to_search_center,
+                dy_to_search_center,
+                dx_to_locked_landing_target_cm,
+                dy_to_locked_landing_target_cm,
                 current_mode,
                 weighted_map,
                 hazard_points,
+                is_hovering,
+                hover_remaining,
             )
 
             cv2.imshow("Martian Rover Navigation", annotated)

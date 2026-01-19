@@ -18,12 +18,15 @@ class Visualizer:
         old_pts: np.ndarray,
         state: np.ndarray,
         num_features: int,
-        safe_center_px: tuple[int, int] | None,
-        remaining_x_cm: float,
-        remaining_y_cm: float,
+        dx_to_search_zone_cm: float,
+        dy_to_search_zone_cm: float,
+        dx_to_locked_landing_target_cm: float | None,
+        dy_to_locked_landing_target_cm: float | None,
         current_mode: MissionMode,
         weighted_map: np.ndarray | None = None,
         hazard_points: np.ndarray | None = None,
+        is_hovering: bool = False,
+        hover_remaining: float | None = None,
     ) -> np.ndarray:
         img = frame.copy()
         h, w = frame.shape[:2]
@@ -50,14 +53,15 @@ class Visualizer:
         if hazard_points is not None and len(hazard_points) > 0:
             for pt in hazard_points:
                 x, y = map(int, pt.ravel())
-                # Larger, semi-transparent magenta circle with white border
-                cv2.circle(img, (x, y), 10, (255, 0, 255), 2)  # Magenta outline
-                cv2.circle(
-                    img, (x, y), 8, (255, 0, 255), -1, cv2.LINE_AA
-                )  # Filled, anti-aliased
-                cv2.circle(
-                    img, (x, y), 10, (255, 255, 255), 1
-                )  # Thin white border for contrast
+                cv2.putText(
+                    img,
+                    "X",
+                    (x - 5, y + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 255),
+                    2,
+                )
 
         overlay = img.copy()
 
@@ -68,8 +72,8 @@ class Visualizer:
             MissionMode.NO_SAFE_ZONE,
         ):
             # Re-compute original target projection here (safe, inside this block)
-            orig_target_x_cm = self.config.navigation.target_offset_x_cm
-            orig_target_y_cm = self.config.navigation.target_offset_y_cm
+            orig_target_x_cm = self.config.navigation.planned_route_dx
+            orig_target_y_cm = self.config.navigation.planned_route_dy
             orig_remaining_x = orig_target_x_cm - pos_x
             orig_remaining_y = orig_target_y_cm - pos_y
 
@@ -78,7 +82,7 @@ class Visualizer:
             target_px = (target_px_x, target_px_y)
 
             outer_radius_px = int(
-                self.config.navigation.arrival_outer_threshold_cm * self.ppc
+                self.config.navigation.search_zone_outer_thresh * self.ppc
             )
 
             if weighted_map is not None:
@@ -112,23 +116,17 @@ class Visualizer:
             # Search radius circle (centered on original target)
             cv2.circle(img, target_px, outer_radius_px, (0, 255, 0), 4)
 
-            # Safe site marker (already inside landing phase block)
-            if safe_center_px is not None:
-                cv2.drawMarker(
-                    img, safe_center_px, (0, 255, 0), cv2.MARKER_CROSS, 40, 1
-                )
-
-        remaining_dist_cm = np.hypot(remaining_x_cm, remaining_y_cm)
+        dist_to_search_zone_cm = np.hypot(dx_to_search_zone_cm, dy_to_search_zone_cm)
 
         # Navigation arrow (only in pure navigation mode)
         if (
             current_mode == MissionMode.NAVIGATION
-            and remaining_dist_cm > self.config.navigation.arrival_inner_threshold_cm
+            and dist_to_search_zone_cm > self.config.navigation.search_zone_inner_thresh
         ):
-            direction = np.array([remaining_x_cm, -remaining_y_cm])
-            direction /= remaining_dist_cm
+            direction = np.array([dx_to_search_zone_cm, -dy_to_search_zone_cm])
+            direction /= dist_to_search_zone_cm
             max_len = self.config.navigation.arrow_max_length_px
-            arrow_length_px = min(remaining_dist_cm * self.ppc, max_len)
+            arrow_length_px = min(dist_to_search_zone_cm * self.ppc, max_len)
             end_point = center + (direction * arrow_length_px).astype(int)
             cv2.arrowedLine(
                 img,
@@ -140,7 +138,7 @@ class Visualizer:
             )
             cv2.putText(
                 img,
-                f"Target: {remaining_dist_cm:.1f} cm",
+                f"Target: {dist_to_search_zone_cm:.1f} cm",
                 (10, 120),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
@@ -149,16 +147,66 @@ class Visualizer:
             )
 
         elif current_mode == MissionMode.LANDING_APPROACH:
-            if safe_center_px is not None:
+            if dx_to_locked_landing_target_cm is not None:
+                header_text = (
+                    "HOVERING OVER SAFE SITE"
+                    if is_hovering
+                    else "APPROACHING SAFE SITE"
+                )
+                header_color = (
+                    (0, 255, 0) if is_hovering else (0, 255, 255)
+                )  # Green when hovering, yellow otherwise
                 cv2.putText(
                     img,
-                    "APPROACHING SAFE SITE",
+                    header_text,
                     (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
-                    (0, 255, 255),
+                    header_color,
                     2,
                 )
+
+                if not is_hovering:
+                    dist_to_locked_landing_target_cm = np.hypot(
+                        dx_to_locked_landing_target_cm, dy_to_locked_landing_target_cm
+                    )
+                    direction = np.array(
+                        [
+                            dx_to_locked_landing_target_cm,
+                            -dy_to_locked_landing_target_cm,
+                        ]
+                    )
+                    direction /= dist_to_locked_landing_target_cm
+                    arrow_length_px = dist_to_locked_landing_target_cm * self.ppc
+                    end_point = center + (direction * arrow_length_px).astype(int)
+                    cv2.arrowedLine(
+                        img,
+                        tuple(center.astype(int)),
+                        tuple(map(int, end_point)),
+                        (0, 255, 0),
+                        6,
+                        tipLength=0.3,
+                    )
+                    cv2.putText(
+                        img,
+                        f"Safe Site: {dist_to_locked_landing_target_cm:.1f} cm",
+                        (10, 150),  # Below header
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 0),
+                        2,
+                    )
+                elif hover_remaining is not None:
+                    # Show countdown instead of arrow
+                    cv2.putText(
+                        img,
+                        f"Hover Countdown: {hover_remaining:.1f} s",
+                        (10, 150),  # Below header
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 0),
+                        2,
+                    )
             else:
                 cv2.putText(
                     img,
@@ -217,21 +265,21 @@ class Visualizer:
         )
         print(f"DEBUG - POSITION = {state.position}")
         # Add orientation display: Convert quaternion to Euler angles (roll, pitch, yaw in degrees)
-        q = state.state[6:10]  # [q_w, q_x, q_y, q_z]
-        rot = R.from_quat([q[1], q[2], q[3], q[0]])  # SciPy expects [x, y, z, w]
-        euler_deg = rot.as_euler("xyz", degrees=True)  # Roll (x), Pitch (y), Yaw (z)
-        cv2.putText(
-            img,
-            f"Att: R:{euler_deg[0]:+.1f} P:{euler_deg[1]:+.1f} Y:{euler_deg[2]:+.1f} deg",
-            (10, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
-            2,
-        )
-        print(
-            f"DEBUG - EULER = R:{euler_deg[0]:+.1f} P:{euler_deg[1]:+.1f} Y:{euler_deg[2]:+.1f} deg"
-        )
+        # q = state.state[6:10]  # [q_w, q_x, q_y, q_z]
+        # rot = R.from_quat([q[1], q[2], q[3], q[0]])  # SciPy expects [x, y, z, w]
+        # euler_deg = rot.as_euler("xyz", degrees=True)  # Roll (x), Pitch (y), Yaw (z)
+        # cv2.putText(
+        #     img,
+        #     f"Att: R:{euler_deg[0]:+.1f} P:{euler_deg[1]:+.1f} Y:{euler_deg[2]:+.1f} deg",
+        #     (10, 60),
+        #     cv2.FONT_HERSHEY_SIMPLEX,
+        #     0.6,
+        #     (255, 255, 255),
+        #     2,
+        # )
+        # print(
+        #     f"DEBUG - EULER = R:{euler_deg[0]:+.1f} P:{euler_deg[1]:+.1f} Y:{euler_deg[2]:+.1f} deg"
+        # )
         cv2.putText(
             img,
             f"Features: {num_features}",

@@ -24,7 +24,7 @@ class PreprocessorConfig:
 
 @dataclass
 class FeatureDetectorConfig:
-    max_corners: int = 300
+    max_corners: int = 200
     quality_level: float = 0.2
     min_distance: int = 7
     block_size: int = 7
@@ -38,11 +38,11 @@ class OpticalFlowConfig:
 
 @dataclass
 class IMUConfig:
-    sample_rate_hz: int = 20  # Match camera FPS-ish
+    sample_rate_hz: int = 250
     accel_sensitivity: float = 16384.0
     gyro_sensitivity: float = 131.0
     mag_sensitivity: float = 0.15
-    bias_calibration_samples: int = 100
+    bias_calibration_samples: int = 500
     bias_file = "/home/kyle/repos/Autonomous-Navigation/examples/imu_biases.npz"
 
 
@@ -55,15 +55,15 @@ class LidarConfig:
 
 @dataclass
 class NavigationConfig:
-    target_offset_x_cm: float = 10.0
-    target_offset_y_cm: float = 0.0
-    arrival_inner_threshold_cm: float = 2.0
-    arrival_outer_threshold_cm: float = 10.0
+    planned_route_dx: float = 10.0
+    planned_route_dy: float = 0.0
+    search_zone_inner_thresh: float = 2.0
+    search_zone_outer_thresh: float = 10.0
     arrow_max_length_px: int = 250
 
     hover_duration_s: float = 2.0  # Time to hover within tolerance for landed
-    pos_tolerance_cm: float = 5.0  # Position tolerance for hover/landed
-    vel_tolerance_cm_s: float = 1.0  # Velocity tolerance for hover
+    pos_tolerance_cm: float = 2.0  # Position tolerance for hover/landed
+    vel_tolerance_cm_s: float = 2.0  # Velocity tolerance for hover
     landing_mode_stability_frames: int = 8
 
 
