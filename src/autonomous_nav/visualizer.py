@@ -22,15 +22,16 @@ class Visualizer:
         dy_to_search_zone_cm: float,
         dx_to_locked_landing_target_cm: float | None,
         dy_to_locked_landing_target_cm: float | None,
-        current_mode: MissionMode,
+        mission_manager,
         weighted_map: np.ndarray | None = None,
         hazard_points: np.ndarray | None = None,
-        is_hovering: bool = False,
-        hover_remaining: float | None = None,
     ) -> np.ndarray:
+        current_mode = mission_manager.current_mode
+
         img = frame.copy()
         h, w = frame.shape[:2]
-        center = np.array([w // 2, h // 2])
+        cx, cy = w // 2, h // 2
+        center = np.array([cx, cy])
 
         pos_x = state.position[0]
         pos_y = state.position[1]
@@ -64,13 +65,35 @@ class Visualizer:
                 )
 
         overlay = img.copy()
+        dist_to_search_zone_cm = np.hypot(dx_to_search_zone_cm, dy_to_search_zone_cm)
+
+        # Navigation arrow (only in pure navigation mode)
+        if current_mode == MissionMode.NAVIGATION:
+            direction = np.array([dx_to_search_zone_cm, -dy_to_search_zone_cm])
+            direction /= dist_to_search_zone_cm
+            max_len = self.config.navigation.arrow_max_length_px
+            arrow_length_px = min(dist_to_search_zone_cm * self.ppc, max_len)
+            end_point = center + (direction * arrow_length_px).astype(int)
+            cv2.arrowedLine(
+                img,
+                tuple(center.astype(int)),
+                tuple(map(int, end_point)),
+                (255, 200, 0),
+                6,
+                tipLength=0.3,
+            )
+            cv2.putText(
+                img,
+                f"Target: {dist_to_search_zone_cm:.1f} cm",
+                (10, 120),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 200, 0),
+                2,
+            )
 
         # === Heatmap + Search Zone (only in landing phases) ===
-        if current_mode in (
-            MissionMode.LANDING_APPROACH,
-            MissionMode.LANDED_SAFE,
-            MissionMode.NO_SAFE_ZONE,
-        ):
+        else:
             # Re-compute original target projection here (safe, inside this block)
             orig_target_x_cm = self.config.navigation.planned_route_dx
             orig_target_y_cm = self.config.navigation.planned_route_dy
@@ -116,46 +139,9 @@ class Visualizer:
             # Search radius circle (centered on original target)
             cv2.circle(img, target_px, outer_radius_px, (0, 255, 0), 4)
 
-        dist_to_search_zone_cm = np.hypot(dx_to_search_zone_cm, dy_to_search_zone_cm)
-
-        # Navigation arrow (only in pure navigation mode)
-        if (
-            current_mode == MissionMode.NAVIGATION
-            and dist_to_search_zone_cm > self.config.navigation.search_zone_inner_thresh
-        ):
-            direction = np.array([dx_to_search_zone_cm, -dy_to_search_zone_cm])
-            direction /= dist_to_search_zone_cm
-            max_len = self.config.navigation.arrow_max_length_px
-            arrow_length_px = min(dist_to_search_zone_cm * self.ppc, max_len)
-            end_point = center + (direction * arrow_length_px).astype(int)
-            cv2.arrowedLine(
-                img,
-                tuple(center.astype(int)),
-                tuple(map(int, end_point)),
-                (255, 200, 0),
-                6,
-                tipLength=0.3,
-            )
-            cv2.putText(
-                img,
-                f"Target: {dist_to_search_zone_cm:.1f} cm",
-                (10, 120),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 200, 0),
-                2,
-            )
-
-        elif current_mode == MissionMode.LANDING_APPROACH:
-            if dx_to_locked_landing_target_cm is not None:
-                header_text = (
-                    "HOVERING OVER SAFE SITE"
-                    if is_hovering
-                    else "APPROACHING SAFE SITE"
-                )
-                header_color = (
-                    (0, 255, 0) if is_hovering else (0, 255, 255)
-                )  # Green when hovering, yellow otherwise
+            if current_mode == MissionMode.SEARCHING:
+                header_text = "SEARCHING"
+                header_color = (0, 165, 255)
                 cv2.putText(
                     img,
                     header_text,
@@ -166,92 +152,124 @@ class Visualizer:
                     2,
                 )
 
-                if not is_hovering:
-                    dist_to_locked_landing_target_cm = np.hypot(
-                        dx_to_locked_landing_target_cm, dy_to_locked_landing_target_cm
-                    )
-                    direction = np.array(
+            elif current_mode == MissionMode.LANDING_APPROACH:
+                landing_site_pixel = (
+                    center
+                    + np.array(
                         [
                             dx_to_locked_landing_target_cm,
                             -dy_to_locked_landing_target_cm,
                         ]
                     )
-                    direction /= dist_to_locked_landing_target_cm
-                    arrow_length_px = dist_to_locked_landing_target_cm * self.ppc
-                    end_point = center + (direction * arrow_length_px).astype(int)
-                    cv2.arrowedLine(
-                        img,
-                        tuple(center.astype(int)),
-                        tuple(map(int, end_point)),
-                        (0, 255, 0),
-                        6,
-                        tipLength=0.3,
-                    )
-                    cv2.putText(
-                        img,
-                        f"Safe Site: {dist_to_locked_landing_target_cm:.1f} cm",
-                        (10, 150),  # Below header
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 0),
-                        2,
-                    )
-                elif hover_remaining is not None:
-                    # Show countdown instead of arrow
-                    cv2.putText(
-                        img,
-                        f"Hover Countdown: {hover_remaining:.1f} s",
-                        (10, 150),  # Below header
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 0),
-                        2,
-                    )
-            else:
+                    * self.ppc
+                ).astype("int")
+                header_text = "APPROACHING SAFE SITE"
+                header_color = (0, 255, 255)
                 cv2.putText(
                     img,
-                    "SEARCHING FOR SAFE SITE",
+                    header_text,
                     (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
-                    (0, 165, 255),
+                    header_color,
+                    2,
+                )
+                cv2.circle(
+                    img,
+                    landing_site_pixel,
+                    int(self.config.navigation.pos_tolerance_cm * self.ppc),
+                    (0, 255, 0),
+                    4,
+                )
+                dist_to_locked_landing_target_cm = np.hypot(
+                    dx_to_locked_landing_target_cm, dy_to_locked_landing_target_cm
+                )
+
+                cv2.putText(
+                    img,
+                    f"Safe Site: {dist_to_locked_landing_target_cm:.1f} cm",
+                    (10, 150),  # Below header
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
                     2,
                 )
 
-        elif current_mode == MissionMode.LANDED_SAFE:
-            cv2.putText(
-                img,
-                "MISSION COMPLETE",
-                (w // 2 - 180, h // 2 + 20),
-                cv2.FONT_HERSHEY_DUPLEX,
-                1.2,
-                (0, 255, 0),
-                4,
-            )
+            elif current_mode == MissionMode.HOVERING:
+                header_text = "HOVERING"
+                header_color = (0, 255, 0)
+                cv2.putText(
+                    img,
+                    header_text,
+                    (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    header_color,
+                    2,
+                )
+                landing_site_pixel = (
+                    center
+                    + np.array(
+                        [
+                            dx_to_locked_landing_target_cm,
+                            -dy_to_locked_landing_target_cm,
+                        ]
+                    )
+                    * self.ppc
+                ).astype("int")
+                # Show countdown instead of arrow
+                hover_remaining = mission_manager.get_hover_remaining_s()
+                cv2.putText(
+                    img,
+                    f"{hover_remaining:.1f}",
+                    landing_site_pixel,  # Below header
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    2,
+                )
+                cv2.circle(
+                    img,
+                    landing_site_pixel,
+                    int(self.config.navigation.pos_tolerance_cm * self.ppc),
+                    (0, 255, 0),
+                    4,
+                )
 
-        elif current_mode == MissionMode.NO_SAFE_ZONE:
-            warning_text = "NO SAFE LANDING ZONE FOUND"
-            text_size = cv2.getTextSize(warning_text, cv2.FONT_HERSHEY_DUPLEX, 1.0, 3)[
-                0
-            ]
-            text_x = (w - text_size[0]) // 2
-            text_y = h // 2 + 20
-            cv2.rectangle(
-                img,
-                (text_x - 20, text_y - text_size[1] - 20),
-                (text_x + text_size[0] + 20, text_y + 20),
-                (0, 0, 255),
-                -1,
-            )
-            cv2.putText(
-                img,
-                warning_text,
-                (text_x, text_y),
-                cv2.FONT_HERSHEY_DUPLEX,
-                1.0,
-                (255, 255, 255),
-                3,
-            )
+            elif current_mode == MissionMode.LANDED_SAFE:
+                cv2.putText(
+                    img,
+                    "MISSION COMPLETE",
+                    (w // 2 - 180, h // 2 + 20),
+                    cv2.FONT_HERSHEY_DUPLEX,
+                    1.2,
+                    (0, 255, 0),
+                    4,
+                )
+
+            elif current_mode == MissionMode.NO_SAFE_ZONE:
+                warning_text = "NO SAFE LANDING ZONE FOUND"
+                text_size = cv2.getTextSize(
+                    warning_text, cv2.FONT_HERSHEY_DUPLEX, 1.0, 3
+                )[0]
+                text_x = (w - text_size[0]) // 2
+                text_y = h // 2 + 20
+                cv2.rectangle(
+                    img,
+                    (text_x - 20, text_y - text_size[1] - 20),
+                    (text_x + text_size[0] + 20, text_y + 20),
+                    (0, 0, 255),
+                    -1,
+                )
+                cv2.putText(
+                    img,
+                    warning_text,
+                    (text_x, text_y),
+                    cv2.FONT_HERSHEY_DUPLEX,
+                    1.0,
+                    (255, 255, 255),
+                    3,
+                )
 
         # Standard info
         cv2.putText(
@@ -263,7 +281,6 @@ class Visualizer:
             (255, 255, 255),
             2,
         )
-        print(f"DEBUG - POSITION = {state.position}")
         # Add orientation display: Convert quaternion to Euler angles (roll, pitch, yaw in degrees)
         # q = state.state[6:10]  # [q_w, q_x, q_y, q_z]
         # rot = R.from_quat([q[1], q[2], q[3], q[0]])  # SciPy expects [x, y, z, w]
@@ -298,5 +315,8 @@ class Visualizer:
             (200, 200, 200),
             2,
         )
-
+        # Draw center indicator
+        size = 20
+        cv2.line(img, (cx - size, cy), (cx + size, cy), (255, 255, 255), 2)
+        cv2.line(img, (cx, cy - size), (cx, cy + size), (255, 255, 255), 2)
         return img

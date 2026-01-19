@@ -58,13 +58,12 @@ class NavigationConfig:
     planned_route_dx: float = 10.0
     planned_route_dy: float = 0.0
     search_zone_inner_thresh: float = 2.0
-    search_zone_outer_thresh: float = 10.0
+    search_zone_outer_thresh: float = 15.0
     arrow_max_length_px: int = 250
 
     hover_duration_s: float = 2.0  # Time to hover within tolerance for landed
     pos_tolerance_cm: float = 2.0  # Position tolerance for hover/landed
-    vel_tolerance_cm_s: float = 2.0  # Velocity tolerance for hover
-    landing_mode_stability_frames: int = 8
+    landing_mode_stability_frames: int = 30
 
 
 @dataclass

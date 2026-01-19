@@ -6,7 +6,9 @@ from autonomous_nav.config import AppConfig
 
 class MissionMode(Enum):
     NAVIGATION = "navigation"
+    SEARCHING = "searching"
     LANDING_APPROACH = "landing_approach"
+    HOVERING = "hovering"
     LANDED_SAFE = "landed_safe"
     NO_SAFE_ZONE = "no_safe_zone"
 
@@ -38,8 +40,10 @@ class MissionManager:
 
         # Tolerances from config
         self.pos_tolerance_cm = config.navigation.pos_tolerance_cm
-        self.vel_tolerance_cm_s = config.navigation.vel_tolerance_cm_s
         self.hover_duration_s = config.navigation.hover_duration_s
+
+        self.safe_xs = []
+        self.safe_ys = []
 
     def reset(self):
         self.current_mode = MissionMode.NAVIGATION
@@ -50,8 +54,6 @@ class MissionManager:
         self,
         pos_x: float,
         pos_y: float,
-        vel_x: float,
-        vel_y: float,
         current_frame_safe_dx_cm: float | None,
         current_frame_safe_dy_cm: float | None,
         current_frame_safe_px: tuple[int, int] | None,
@@ -63,56 +65,82 @@ class MissionManager:
         outside_outer = dist_to_search_center > self.search_zone_outer_thresh
 
         has_safe_spot = current_frame_safe_px is not None
-        vel_mag = np.hypot(vel_x, vel_y)
 
         new_mode = self.current_mode
 
         if self.current_mode == MissionMode.NAVIGATION:
             if inside_inner:
-                if has_safe_spot:
-                    self.safe_count += 1
-                    self.no_safe_count = 0
-                    if self.safe_count >= self.stability_frames:
-                        # Commit to landing site
-                        self.locked_landing_target_x_cm = pos_x + (
-                            current_frame_safe_dx_cm or 0.0
-                        )
-                        self.locked_landing_target_y_cm = pos_y + (
-                            current_frame_safe_dy_cm or 0.0
-                        )
-                        new_mode = MissionMode.LANDING_APPROACH
-                        self.safe_count = 0
-                else:
-                    self.no_safe_count += 1
-                    self.safe_count = 0
-                    if self.no_safe_count >= self.stability_frames:
-                        new_mode = MissionMode.NO_SAFE_ZONE
-                        self.no_safe_count = 0
+                new_mode = MissionMode.SEARCHING
             else:
                 # Far from target — reset counters
                 self._reset_counters()
+
+        elif self.current_mode == MissionMode.SEARCHING:
+            if has_safe_spot:
+                self.safe_count += 1
+                self.no_safe_count = 0
+                self.safe_xs.append(pos_x + current_frame_safe_dx_cm)
+                self.safe_ys.append(pos_y + current_frame_safe_dy_cm)
+
+                if self.safe_count >= self.stability_frames:
+                    # Commit to landing site
+                    self.locked_landing_target_x_cm = np.median(self.safe_xs)
+                    self.locked_landing_target_y_cm = np.median(self.safe_ys)
+                    new_mode = MissionMode.LANDING_APPROACH
+                    self.safe_count = 0
+                    self.safe_xs = []
+                    self.safe_ys = []
+            else:
+                self.no_safe_count += 1
+                self.safe_count = 0
+                if self.no_safe_count >= self.stability_frames:
+                    new_mode = MissionMode.NO_SAFE_ZONE
+                    self.no_safe_count = 0
 
         elif self.current_mode == MissionMode.LANDING_APPROACH:
             if outside_outer:
                 self._reset_landing()
                 new_mode = MissionMode.NAVIGATION
             else:
-                # Check hover stability for landing confirmation
+                # Check distance to locked landing target
                 dist_to_landing = np.hypot(
                     self.locked_landing_target_x_cm - pos_x,
                     self.locked_landing_target_y_cm - pos_y,
                 )
-                is_hovering = (
-                    dist_to_landing < self.pos_tolerance_cm
-                    and vel_mag < self.vel_tolerance_cm_s
-                )
-                if is_hovering:
+                if dist_to_landing < self.pos_tolerance_cm:
+                    new_mode = MissionMode.HOVERING
                     if self.hover_start_time is None:
                         self.hover_start_time = time.time()
-                    elif time.time() - self.hover_start_time >= self.hover_duration_s:
-                        new_mode = MissionMode.LANDED_SAFE
+
+                if not has_safe_spot:
+                    self.no_safe_count += 1
+                    self.safe_count = 0
+                    if self.no_safe_count >= self.stability_frames:
+                        new_mode = MissionMode.NO_SAFE_ZONE
+                        self.no_safe_count = 0
                 else:
+                    self.safe_count += 1
+                    self.no_safe_count = 0
+                    # Optionally re-lock to better spot if significantly improved
+                    # (not implemented here to keep lock stable)
+
+        elif self.current_mode == MissionMode.HOVERING:
+            if outside_outer:
+                self._reset_landing()
+                new_mode = MissionMode.NAVIGATION
+            else:
+                # Check distance to locked landing target
+                dist_to_landing = np.hypot(
+                    self.locked_landing_target_x_cm - pos_x,
+                    self.locked_landing_target_y_cm - pos_y,
+                )
+                if dist_to_landing >= self.pos_tolerance_cm:
+                    new_mode = MissionMode.LANDING_APPROACH
                     self.hover_start_time = None
+                else:
+                    elapsed = time.time() - self.hover_start_time
+                    if elapsed >= self.hover_duration_s:
+                        new_mode = MissionMode.LANDED_SAFE
 
                 if not has_safe_spot:
                     self.no_safe_count += 1
@@ -133,19 +161,9 @@ class MissionManager:
             elif has_safe_spot:
                 self.safe_count += 1
                 self.no_safe_count = 0
-                if self.safe_count >= self.stability_frames:
-                    # Recover and lock new safe site
-                    self.locked_landing_target_x_cm = pos_x + (
-                        current_frame_safe_dx_cm or 0.0
-                    )
-                    self.locked_landing_target_y_cm = pos_y + (
-                        current_frame_safe_dy_cm or 0.0
-                    )
-                    new_mode = MissionMode.LANDING_APPROACH
-                    self.safe_count = 0
+                new_mode = MissionMode.SEARCHING
             else:
                 self.safe_count = 0
-                # Stay in NO_SAFE_ZONE
 
         elif self.current_mode == MissionMode.LANDED_SAFE:
             if outside_outer:  # NEW: Use outer threshold to exit
@@ -159,8 +177,6 @@ class MissionManager:
             print(
                 f"[MissionManager] Mode change: {self.previous_mode.value} → {new_mode.value}"
             )
-
-        return self.current_mode
 
     def _reset_landing(self):
         self.locked_landing_target_x_cm = None
@@ -176,6 +192,8 @@ class MissionManager:
     def in_landing_phase(self) -> bool:
         return self.current_mode in (
             MissionMode.LANDING_APPROACH,
+            MissionMode.SEARCHING,
+            MissionMode.HOVERING,
             MissionMode.LANDED_SAFE,
             MissionMode.NO_SAFE_ZONE,
         )

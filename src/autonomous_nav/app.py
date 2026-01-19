@@ -170,6 +170,14 @@ class AutonomousNavigationApp:
                 weighted_map = None
                 hazard_points = None
 
+            # Update mission mode
+            mission_manager.update(
+                state.position[0],
+                state.position[1],
+                current_frame_safe_dx,
+                current_frame_safe_dy,
+                current_frame_safe_px,
+            )
             if mission_manager.locked_landing_target_x_cm is not None:
                 dx_to_locked_landing_target_cm = (
                     mission_manager.locked_landing_target_x_cm - state.position[0]
@@ -180,19 +188,6 @@ class AutonomousNavigationApp:
             else:
                 dx_to_locked_landing_target_cm = None
                 dy_to_locked_landing_target_cm = None
-
-            # Update mission mode
-            current_mode = mission_manager.update(
-                state.position[0],
-                state.position[1],
-                state.velocity[0],
-                state.velocity[1],
-                current_frame_safe_dx,
-                current_frame_safe_dy,
-                current_frame_safe_px,
-            )
-            is_hovering = mission_manager.is_hovering()
-            hover_remaining = mission_manager.get_hover_remaining_s()
 
             # Visualization
             annotated = visualizer.annotate_frame(
@@ -206,11 +201,9 @@ class AutonomousNavigationApp:
                 dy_to_search_center,
                 dx_to_locked_landing_target_cm,
                 dy_to_locked_landing_target_cm,
-                current_mode,
+                mission_manager,
                 weighted_map,
                 hazard_points,
-                is_hovering,
-                hover_remaining,
             )
 
             cv2.imshow("Martian Rover Navigation", annotated)
