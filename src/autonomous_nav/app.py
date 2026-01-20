@@ -188,6 +188,7 @@ class AutonomousNavigationApp:
             mission_manager.update(
                 state.position[0],
                 state.position[1],
+                state.position[2],
                 current_frame_safe_dx,
                 current_frame_safe_dy,
                 current_frame_safe_px,

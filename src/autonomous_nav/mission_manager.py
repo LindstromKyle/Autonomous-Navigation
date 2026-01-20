@@ -5,9 +5,11 @@ from autonomous_nav.config import AppConfig
 
 
 class MissionMode(Enum):
+    ASCENT = "ascent"
     NAVIGATION = "navigation"
     SEARCHING = "searching"
     LANDING_APPROACH = "landing_approach"
+    DESCENT = "descent"
     HOVERING = "hovering"
     LANDED_SAFE = "landed_safe"
     NO_SAFE_ZONE = "no_safe_zone"
@@ -54,6 +56,7 @@ class MissionManager:
         self,
         pos_x: float,
         pos_y: float,
+        pos_z: float,
         current_frame_safe_dx_cm: float | None,
         current_frame_safe_dy_cm: float | None,
         current_frame_safe_px: tuple[int, int] | None,
@@ -108,9 +111,7 @@ class MissionManager:
                     self.locked_landing_target_y_cm - pos_y,
                 )
                 if dist_to_landing < self.pos_tolerance_cm:
-                    new_mode = MissionMode.HOVERING
-                    if self.hover_start_time is None:
-                        self.hover_start_time = time.time()
+                    new_mode = MissionMode.DESCENT
 
                 if not has_safe_spot:
                     self.no_safe_count += 1
@@ -123,36 +124,38 @@ class MissionManager:
                     self.no_safe_count = 0
                     # Optionally re-lock to better spot if significantly improved
                     # (not implemented here to keep lock stable)
+
+        elif self.current_mode == MissionMode.DESCENT:
+            if pos_z <= self.config.global_.final_height:
+                new_mode = MissionMode.HOVERING
+                if self.hover_start_time is None:
+                    self.hover_start_time = time.time()
 
         elif self.current_mode == MissionMode.HOVERING:
-            if outside_outer:
-                self._reset_landing()
-                new_mode = MissionMode.NAVIGATION
+            # Check distance to locked landing target
+            dist_to_landing = np.hypot(
+                self.locked_landing_target_x_cm - pos_x,
+                self.locked_landing_target_y_cm - pos_y,
+            )
+            if dist_to_landing >= self.pos_tolerance_cm:
+                new_mode = MissionMode.LANDING_APPROACH
+                self.hover_start_time = None
+            elif pos_z > self.config.global_.final_height + 1.5:
+                new_mode = MissionMode.DESCENT
             else:
-                # Check distance to locked landing target
-                dist_to_landing = np.hypot(
-                    self.locked_landing_target_x_cm - pos_x,
-                    self.locked_landing_target_y_cm - pos_y,
-                )
-                if dist_to_landing >= self.pos_tolerance_cm:
-                    new_mode = MissionMode.LANDING_APPROACH
-                    self.hover_start_time = None
-                else:
-                    elapsed = time.time() - self.hover_start_time
-                    if elapsed >= self.hover_duration_s:
-                        new_mode = MissionMode.LANDED_SAFE
+                elapsed = time.time() - self.hover_start_time
+                if elapsed >= self.hover_duration_s:
+                    new_mode = MissionMode.LANDED_SAFE
 
-                if not has_safe_spot:
-                    self.no_safe_count += 1
-                    self.safe_count = 0
-                    if self.no_safe_count >= self.stability_frames:
-                        new_mode = MissionMode.NO_SAFE_ZONE
-                        self.no_safe_count = 0
-                else:
-                    self.safe_count += 1
+            if not has_safe_spot:
+                self.no_safe_count += 1
+                self.safe_count = 0
+                if self.no_safe_count >= self.stability_frames:
+                    new_mode = MissionMode.NO_SAFE_ZONE
                     self.no_safe_count = 0
-                    # Optionally re-lock to better spot if significantly improved
-                    # (not implemented here to keep lock stable)
+            else:
+                self.safe_count += 1
+                self.no_safe_count = 0
 
         elif self.current_mode == MissionMode.NO_SAFE_ZONE:
             if outside_outer:  # NEW: Use outer threshold to exit
@@ -193,6 +196,7 @@ class MissionManager:
         return self.current_mode in (
             MissionMode.LANDING_APPROACH,
             MissionMode.SEARCHING,
+            MissionMode.DESCENT,
             MissionMode.HOVERING,
             MissionMode.LANDED_SAFE,
             MissionMode.NO_SAFE_ZONE,

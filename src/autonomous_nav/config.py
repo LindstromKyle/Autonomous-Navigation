@@ -8,7 +8,8 @@ class GlobalConfig:
     frame_size: Tuple[int, int] = (640, 480)
     min_features: int = 40
     num_frames_redetect: int = 20
-    countdown_duration = 3.5
+    countdown_duration: float = 3.5
+    final_height: float = 35.0
 
 
 @dataclass

@@ -212,6 +212,51 @@ class Visualizer:
                     2,
                 )
 
+            elif current_mode == MissionMode.DESCENT:
+                header_text = f"DESCENT"
+                header_color = (255, 0, 0)
+                cv2.putText(
+                    img,
+                    header_text,
+                    (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    header_color,
+                    2,
+                )
+                landing_site_pixel = center + np.array(
+                    [
+                        cm_to_pixels(
+                            dx_to_locked_landing_target_cm, pos_z, self.focal_px
+                        ),
+                        -cm_to_pixels(
+                            dy_to_locked_landing_target_cm, pos_z, self.focal_px
+                        ),
+                    ]
+                ).astype("int")
+                cv2.putText(
+                    img,
+                    f"{pos_z:.1f}",
+                    landing_site_pixel,  # Below header
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 0, 0),
+                    2,
+                )
+                cv2.circle(
+                    img,
+                    landing_site_pixel,
+                    int(
+                        cm_to_pixels(
+                            self.config.navigation.pos_tolerance_cm,
+                            pos_z,
+                            self.focal_px,
+                        )
+                    ),
+                    (0, 255, 0),
+                    4,
+                )
+
             elif current_mode == MissionMode.HOVERING:
                 header_text = "HOVERING"
                 header_color = (0, 255, 0)
