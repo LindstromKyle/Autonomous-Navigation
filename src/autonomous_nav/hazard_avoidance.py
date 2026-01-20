@@ -2,16 +2,14 @@ import numpy as np
 import cv2
 from abc import ABC, abstractmethod
 from autonomous_nav.config import AppConfig, HazardConfig
-from autonomous_nav.utils import pixels_to_cm
+from autonomous_nav.utils import cm_to_pixels, pixels_to_cm
 from ultralytics import YOLO
 
 
 class HazardAvoidance(ABC):
     def __init__(self, config: HazardConfig, global_config: AppConfig):
         self.config = config
-        self.global_config = global_config
-        self.pixels_per_cm = global_config.global_.pixels_per_cm
-        self.min_clearance_px = int(self.config.min_clearance_cm * self.pixels_per_cm)
+        self.global_config = global_config.global_
         self.hazard_points: np.ndarray | None = None
 
     @abstractmethod
@@ -31,6 +29,7 @@ class HazardAvoidance(ABC):
         features: np.ndarray,
         frame_height: int,
         frame_width: int,
+        current_height: float,
         search_zone_center: tuple[int, int] | None = None,
         search_zone_outer_thresh: float | None = None,
         frame: np.ndarray | None = None,
@@ -62,12 +61,24 @@ class HazardAvoidance(ABC):
 
         # Distance transform
         dist_map = cv2.distanceTransform(hazard_img, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
-        dist_map[dist_map < self.min_clearance_px] = 0
+        min_clearance = cm_to_pixels(
+            self.config.min_clearance_cm,
+            current_height,
+            self.global_config.focal_length_px,
+        )
+        dist_map[dist_map < min_clearance] = 0
 
         # Search zone mask
         search_mask = np.ones((frame_height, frame_width), dtype=bool)
         if search_zone_outer_thresh is not None and search_zone_center is not None:
-            outer_radius_px = int(search_zone_outer_thresh * self.pixels_per_cm + 0.5)
+            outer_radius_px = int(
+                cm_to_pixels(
+                    search_zone_outer_thresh,
+                    current_height,
+                    self.global_config.focal_length_px,
+                )
+                + 0.5
+            )
             cy, cx = np.ogrid[:frame_height, :frame_width]
             dist_sq = (cx - search_zone_center[0]) ** 2 + (
                 cy - search_zone_center[1]
@@ -86,8 +97,12 @@ class HazardAvoidance(ABC):
             safe_center_px = (int(safe_x), int(safe_y))
             dx_px = safe_x - frame_width // 2
             dy_px = safe_y - frame_height // 2
-            dx_cm = pixels_to_cm(dx_px, self.pixels_per_cm)
-            dy_cm = -pixels_to_cm(dy_px, self.pixels_per_cm)
+            dx_cm = pixels_to_cm(
+                dx_px, current_height, self.global_config.focal_length_px
+            )
+            dy_cm = -pixels_to_cm(
+                dy_px, current_height, self.global_config.focal_length_px
+            )
         else:
             safe_center_px = None
             dx_cm = dy_cm = None

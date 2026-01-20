@@ -3,12 +3,13 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 from autonomous_nav.config import AppConfig
 from autonomous_nav.mission_manager import MissionMode
+from autonomous_nav.utils import cm_to_pixels
 
 
 class Visualizer:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.ppc = config.global_.pixels_per_cm  # For consistent scaling
+        self.focal_px = config.global_.focal_length_px
 
     def annotate_frame(
         self,
@@ -72,7 +73,9 @@ class Visualizer:
             direction = np.array([dx_to_search_zone_cm, -dy_to_search_zone_cm])
             direction /= dist_to_search_zone_cm
             max_len = self.config.navigation.arrow_max_length_px
-            arrow_length_px = min(dist_to_search_zone_cm * self.ppc, max_len)
+            arrow_length_px = min(
+                cm_to_pixels(dist_to_search_zone_cm, pos_z, self.focal_px), max_len
+            )
             end_point = center + (direction * arrow_length_px).astype(int)
             cv2.arrowedLine(
                 img,
@@ -100,12 +103,20 @@ class Visualizer:
             orig_remaining_x = orig_target_x_cm - pos_x
             orig_remaining_y = orig_target_y_cm - pos_y
 
-            target_px_x = w // 2 + int(orig_remaining_x * self.ppc)
-            target_px_y = h // 2 - int(orig_remaining_y * self.ppc)
+            target_px_x = w // 2 + int(
+                cm_to_pixels(orig_remaining_x, pos_z, self.focal_px)
+            )
+            target_px_y = h // 2 - int(
+                cm_to_pixels(orig_remaining_y, pos_z, self.focal_px)
+            )
             target_px = (target_px_x, target_px_y)
 
             outer_radius_px = int(
-                self.config.navigation.search_zone_outer_thresh * self.ppc
+                cm_to_pixels(
+                    self.config.navigation.search_zone_outer_thresh,
+                    pos_z,
+                    self.focal_px,
+                )
             )
 
             if weighted_map is not None:
@@ -153,15 +164,15 @@ class Visualizer:
                 )
 
             elif current_mode == MissionMode.LANDING_APPROACH:
-                landing_site_pixel = (
-                    center
-                    + np.array(
-                        [
-                            dx_to_locked_landing_target_cm,
-                            -dy_to_locked_landing_target_cm,
-                        ]
-                    )
-                    * self.ppc
+                landing_site_pixel = center + np.array(
+                    [
+                        cm_to_pixels(
+                            dx_to_locked_landing_target_cm, pos_z, self.focal_px
+                        ),
+                        -cm_to_pixels(
+                            dy_to_locked_landing_target_cm, pos_z, self.focal_px
+                        ),
+                    ]
                 ).astype("int")
                 header_text = "APPROACHING SAFE SITE"
                 header_color = (0, 255, 255)
@@ -177,7 +188,13 @@ class Visualizer:
                 cv2.circle(
                     img,
                     landing_site_pixel,
-                    int(self.config.navigation.pos_tolerance_cm * self.ppc),
+                    int(
+                        cm_to_pixels(
+                            self.config.navigation.pos_tolerance_cm,
+                            pos_z,
+                            self.focal_px,
+                        )
+                    ),
                     (0, 255, 0),
                     4,
                 )
@@ -207,15 +224,15 @@ class Visualizer:
                     header_color,
                     2,
                 )
-                landing_site_pixel = (
-                    center
-                    + np.array(
-                        [
-                            dx_to_locked_landing_target_cm,
-                            -dy_to_locked_landing_target_cm,
-                        ]
-                    )
-                    * self.ppc
+                landing_site_pixel = center + np.array(
+                    [
+                        cm_to_pixels(
+                            dx_to_locked_landing_target_cm, pos_z, self.focal_px
+                        ),
+                        -cm_to_pixels(
+                            dy_to_locked_landing_target_cm, pos_z, self.focal_px
+                        ),
+                    ]
                 ).astype("int")
                 # Show countdown instead of arrow
                 hover_remaining = mission_manager.get_hover_remaining_s()
@@ -231,7 +248,13 @@ class Visualizer:
                 cv2.circle(
                     img,
                     landing_site_pixel,
-                    int(self.config.navigation.pos_tolerance_cm * self.ppc),
+                    int(
+                        cm_to_pixels(
+                            self.config.navigation.pos_tolerance_cm,
+                            pos_z,
+                            self.focal_px,
+                        )
+                    ),
                     (0, 255, 0),
                     4,
                 )

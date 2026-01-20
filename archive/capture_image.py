@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Select name
-image_name = "/home/kyle/repos/Autonomous-Navigation/images/calibration_55cm.jpg"
+image_name = "/home/kyle/repos/Autonomous-Navigation/images/calibration_39cm.jpg"
 
 # Initialize the camera
 picam2 = Picamera2()

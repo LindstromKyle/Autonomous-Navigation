@@ -4,7 +4,7 @@ from typing import Tuple
 
 @dataclass
 class GlobalConfig:
-    pixels_per_cm: float = 25.0  # 55cm = 17.5, 40cm = 25.0
+    focal_length_px: float = 975.0  # 55cm = 17.5, 39cm = 25.0
     frame_size: Tuple[int, int] = (640, 480)
     min_features: int = 40
     num_frames_redetect: int = 20

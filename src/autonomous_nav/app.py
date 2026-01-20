@@ -14,7 +14,7 @@ from autonomous_nav.optical_flow import OpticalFlowModule
 from autonomous_nav.state_estimator import StateEstimator
 from autonomous_nav.imu import IMUModule
 from autonomous_nav.hazard_avoidance import ClearanceBasedHazardAvoidance
-from autonomous_nav.utils import pixels_to_cm
+from autonomous_nav.utils import cm_to_pixels, pixels_to_cm
 from autonomous_nav.visualizer import Visualizer
 from autonomous_nav.mission_manager import MissionManager
 
@@ -104,10 +104,16 @@ class AutonomousNavigationApp:
 
             # Visual velocity update
             vis_vel_x = (
-                -pixels_to_cm(flow_dx_px, self.config.global_.pixels_per_cm) / frame_dt
+                -pixels_to_cm(
+                    flow_dx_px, state.position[2], self.config.global_.focal_length_px
+                )
+                / frame_dt
             )
             vis_vel_y = (
-                pixels_to_cm(flow_dy_px, self.config.global_.pixels_per_cm) / frame_dt
+                pixels_to_cm(
+                    flow_dy_px, state.position[2], self.config.global_.focal_length_px
+                )
+                / frame_dt
             )
             flow_mag = np.hypot(vis_vel_x, vis_vel_y)
             if flow_mag < 0.5 and len(valid_new_pts) > 20:
@@ -136,9 +142,16 @@ class AutonomousNavigationApp:
 
             if mission_manager.in_landing_phase:
                 # Search zone is ALWAYS centered on the original target
-                ppc = self.config.global_.pixels_per_cm
-                dx_to_search_center = state.dx_to_search_center * ppc
-                dy_to_search_center = -state.dy_to_search_center * ppc
+                dx_to_search_center = cm_to_pixels(
+                    dx_to_search_center,
+                    state.position[2],
+                    self.config.global_.focal_length_px,
+                )
+                dy_to_search_center = -cm_to_pixels(
+                    dy_to_search_center,
+                    state.position[2],
+                    self.config.global_.focal_length_px,
+                )
                 frame_center_x = w // 2
                 frame_center_y = h // 2
                 search_zone_center = (
@@ -158,6 +171,7 @@ class AutonomousNavigationApp:
                     valid_new_pts.reshape(-1, 2),
                     h,
                     w,
+                    state.position[2],
                     search_zone_center=search_zone_center,
                     search_zone_outer_thresh=search_zone_outer_thresh,
                     frame=frame,
