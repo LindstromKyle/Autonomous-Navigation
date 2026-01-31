@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from autonomous_nav.config import AppConfig
 from autonomous_nav.camera import CameraModule
+from autonomous_nav.dust import DustSimulator
 from autonomous_nav.lidar import LidarModule
 from autonomous_nav.preprocessor import (
     PreprocessorPipeline,
@@ -27,6 +28,8 @@ class AutonomousNavigationApp:
     def run(self):
 
         camera = CameraModule(self.config)
+
+        self.dust_sim = DustSimulator(self.config)
 
         # Build preprocessor chain
         preprocessors = []
@@ -56,6 +59,7 @@ class AutonomousNavigationApp:
 
         # Initial frame and features
         old_frame = camera.capture_frame()
+        old_frame = self.dust_sim.apply_dust(old_frame)
         last_frame_time = time.time()
         old_gray = cv2.cvtColor(old_frame, cv2.COLOR_RGB2GRAY)
         old_gray = preprocessor.process(old_gray)
@@ -73,6 +77,7 @@ class AutonomousNavigationApp:
             frame_dt = max(current_time - last_frame_time, 0.025)
 
             frame = camera.capture_frame()
+            frame = self.dust_sim.apply_dust(frame)
             gray_raw = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
             gray = preprocessor.process(gray_raw)
             frame_count += 1

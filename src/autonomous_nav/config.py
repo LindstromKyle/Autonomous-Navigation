@@ -24,6 +24,18 @@ class PreprocessorConfig:
 
 
 @dataclass
+class DustSimulatorConfig:
+    map_scale: float = 5.0  # How much larger the static map is
+    correlation_distance: int = 50
+    vel_x: float = 1.0  # Pixels/frame horizontal drift
+    vel_y: float = 0.5  # Pixels/frame vertical drift (positive = down)
+    dust_intensity: float = 0.5  # Overall blend strength [0–1]
+    dust_contrast: float = 2.0
+    particle_density: float = 0.001  # particles per pixel
+    particle_size: float = 3.0
+
+
+@dataclass
 class FeatureDetectorConfig:
     max_corners: int = 200
     quality_level: float = 0.2
@@ -82,6 +94,7 @@ class HazardConfig:
 class AppConfig:
     global_: GlobalConfig = field(default_factory=GlobalConfig)
     preprocessor: PreprocessorConfig = field(default_factory=PreprocessorConfig)
+    dust_simulator: DustSimulatorConfig = field(default_factory=DustSimulatorConfig)
     feature_detector: FeatureDetectorConfig = field(
         default_factory=FeatureDetectorConfig
     )

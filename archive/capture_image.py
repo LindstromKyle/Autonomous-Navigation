@@ -3,17 +3,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Select name
-image_name = "/home/kyle/repos/Autonomous-Navigation/images/calibration_39cm.jpg"
+image_name = "/home/kyle/repos/Autonomous-Navigation/bbox_images/training_img_20.jpg"
 
 # Initialize the camera
 picam2 = Picamera2()
-
-# Configure for still capture (adjust resolution if needed, e.g., for lower res: {'size': (640, 480)})
-# config = picam2.create_still_configuration(main={"size": (1920, 1080)})
-config = picam2.create_still_configuration(main={"size": (640, 480)})
-picam2.configure(config)
-
-# Start the camera
+camera_config = picam2.create_preview_configuration(
+    main={"size": (640, 480), "format": "RGB888"}
+)
+picam2.configure(camera_config)
 picam2.start()
 
 # Capture a single image as a NumPy array (RGB format by default)
