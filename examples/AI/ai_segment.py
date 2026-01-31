@@ -3,8 +3,9 @@ import time
 import numpy as np
 from picamera2 import Picamera2
 from ultralytics import YOLO
+from autonomous_nav.dust import DustSimulator
 from autonomous_nav.preprocessor import CLAHEPreprocessor, GaussianBlurPreprocessor
-from autonomous_nav.config import PreprocessorConfig
+from autonomous_nav.config import AppConfig, PreprocessorConfig
 
 # ================== Config ==================
 FRAME_WIDTH = 640
@@ -53,8 +54,11 @@ def main():
     picam2.start()
     print("Camera started. Loading YOLOv8 detection model...")
 
+    config = AppConfig()
+    dust_sim = DustSimulator(config)
+
     model = YOLO(
-        "/home/kyle/repos/Autonomous-Navigation/examples/AI/full_marsdata_v2.pt"
+        "/home/kyle/repos/Autonomous-Navigation/examples/AI/mars_rocks_custom.pt"
     )
     print("Model loaded. Starting live detection (press 'q' to quit)")
 
@@ -72,8 +76,10 @@ def main():
         # === Preprocess frame according to config ===
         # input_frame = preprocess_frame(frame)
 
+        frame = dust_sim.apply_dust(frame)
+
         # Run inference
-        results = model(frame, imgsz=INPUT_SIZE, conf=0.005, verbose=False)[0]
+        results = model(frame, imgsz=INPUT_SIZE, conf=0.15, verbose=False)[0]
 
         # Draw bounding boxes on original frame (for clean visualization)
         overlay = frame.copy()
@@ -87,15 +93,15 @@ def main():
 
             color = (0, 0, 255)  # Red for bounding box
             cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(
-                overlay, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
-            )
+            # cv2.putText(
+            #     overlay, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
+            # )
 
             # Centroid
-            center_x = (x1 + x2) // 2
-            center_y = (y1 + y2) // 2
-            hazard_centers.append((center_x, center_y))
-            cv2.circle(overlay, (center_x, center_y), 6, (255, 0, 0), -1)  # Blue center
+            # center_x = (x1 + x2) // 2
+            # center_y = (y1 + y2) // 2
+            # hazard_centers.append((center_x, center_y))
+            # cv2.circle(overlay, (center_x, center_y), 6, (255, 0, 0), -1)  # Blue center
 
         # FPS and detection count
         curr_time = time.time()
