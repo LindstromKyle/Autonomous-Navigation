@@ -9,6 +9,7 @@ class GlobalConfig:
     min_features: int = 40
     num_frames_redetect: int = 20
     countdown_duration: float = 3.5
+    initial_height: float = 45.0
     final_height: float = 35.0
 
 

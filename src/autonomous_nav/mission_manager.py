@@ -18,7 +18,7 @@ class MissionMode(Enum):
 class MissionManager:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.current_mode = MissionMode.NAVIGATION
+        self.current_mode = MissionMode.ASCENT
         self.previous_mode = None
 
         self.planned_route_dx = config.navigation.planned_route_dx
@@ -71,7 +71,11 @@ class MissionManager:
 
         new_mode = self.current_mode
 
-        if self.current_mode == MissionMode.NAVIGATION:
+        if self.current_mode == MissionMode.ASCENT:
+            if pos_z >= self.config.global_.initial_height:
+                new_mode = MissionMode.NAVIGATION
+
+        elif self.current_mode == MissionMode.NAVIGATION:
             if inside_inner:
                 new_mode = MissionMode.SEARCHING
             else:

@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 from autonomous_nav.config import AppConfig
 from autonomous_nav.mission_manager import MissionMode
 from autonomous_nav.utils import cm_to_pixels
@@ -10,6 +9,196 @@ class Visualizer:
     def __init__(self, config: AppConfig):
         self.config = config
         self.focal_px = config.global_.focal_length_px
+        self.mode_colors = {
+            "ascent": (255, 200, 0),  # blue
+            "navigation": (255, 200, 0),  # blue
+            "searching": (0, 255, 255),  # yellow
+            "landing_approach": (0, 255, 255),  # yellow
+            "descent": (0, 255, 0),  # green
+            "hovering": (0, 255, 0),  # green
+            "landed_safe": (0, 255, 0),  # green
+            "no_safe_zone": (0, 0, 255),  # red
+        }
+
+    def mode_display_name(self, current_mode: MissionMode) -> str:
+        return current_mode.value.replace("_", " ").upper()
+
+    def draw_altitude_progress_bars(
+        self,
+        frame: np.ndarray,
+        mission_manager,
+        pos_z: float,
+        bar_width: int = 24,
+        bar_height: int = 140,
+        margin_from_edge: int = 40,
+        bg_color: tuple = (40, 40, 40),
+        fill_color_ascent: tuple = (120, 255, 180),  # mint green
+        fill_color_descent: tuple = (180, 220, 255),  # cyan
+        border_color: tuple = (180, 180, 180),
+        text_color: tuple = (220, 220, 255),
+    ) -> None:
+        """
+        Draws a vertical progress bar on the left side:
+        - ASCENT:   fills upward (bottom → top) toward target height
+        - DESCENT:  empties downward (top → bottom) toward final height
+        Hides in other modes.
+        """
+        mode = mission_manager.current_mode
+
+        if mode not in (
+            MissionMode.ASCENT,
+            MissionMode.DESCENT,
+        ):
+            return  # skip drawing in other modes
+
+        # ── Configurable targets ──
+        target_ascent_m = mission_manager.config.global_.initial_height
+        target_descent_m = (
+            mission_manager.config.global_.final_height
+        )  # usually ~0 or small value
+
+        # Normalize progress 0.0 → 1.0
+        if mode == MissionMode.ASCENT:
+            progress = np.clip(pos_z / target_ascent_m, 0.0, 1.0)
+            fill_color = fill_color_ascent
+            label = "ASCENT"
+        else:  # DESCENT
+            remaining = np.maximum(target_descent_m - pos_z, 0.0)
+            total_descent_range = (
+                target_ascent_m - target_descent_m
+            )  # usually almost = initial_height
+            if total_descent_range < 0.1:
+                total_descent_range = target_ascent_m  # fallback
+            progress = np.clip(
+                1.0 - (pos_z - target_descent_m) / total_descent_range, 0.0, 1.0
+            )
+            fill_color = fill_color_descent
+            label = "DESCENT"
+
+        # ── Positions ──
+        frame_h, frame_w = frame.shape[:2]
+        x_left = margin_from_edge
+        y_top = margin_from_edge
+        x_right = x_left + bar_width
+        y_bottom = y_top + bar_height
+
+        # Background (dark)
+        cv2.rectangle(frame, (x_left, y_top), (x_right, y_bottom), bg_color, cv2.FILLED)
+
+        # Filled portion
+        if mode == MissionMode.ASCENT:
+            # Fill from bottom up
+            fill_h = int(bar_height * progress)
+            fill_top = y_bottom - fill_h
+            cv2.rectangle(
+                frame, (x_left, fill_top), (x_right, y_bottom), fill_color, cv2.FILLED
+            )
+        else:
+            # Fill from top down (progress = how much is still "full")
+            fill_h = int(bar_height * progress)
+            fill_bottom = y_top + fill_h
+            cv2.rectangle(
+                frame, (x_left, y_top), (x_right, fill_bottom), fill_color, cv2.FILLED
+            )
+
+        # Border
+        cv2.rectangle(
+            frame, (x_left, y_top), (x_right, y_bottom), border_color, thickness=2
+        )
+
+        # Small label above bar
+        font = cv2.FONT_HERSHEY_DUPLEX
+        font_scale = 0.7
+        thick = 1
+        label_size, baseline = cv2.getTextSize(label, font, font_scale, thick)
+        label_x = x_left + (bar_width - label_size[0]) // 2
+        label_y = y_top - 8
+        cv2.putText(
+            frame,
+            label,
+            (label_x, label_y),
+            font,
+            font_scale,
+            text_color,
+            thick,
+            cv2.LINE_AA,
+        )
+
+        # Optional: percentage or altitude text below bar
+        alt_text = f"{pos_z:.1f} m"
+        alt_size, _ = cv2.getTextSize(alt_text, font, font_scale, thick)
+        alt_x = x_left + (bar_width - alt_size[0]) // 2
+        alt_y = y_bottom + 20
+        cv2.putText(
+            frame,
+            alt_text,
+            (alt_x, alt_y),
+            font,
+            font_scale,
+            text_color,
+            thick,
+            cv2.LINE_AA,
+        )
+
+    def draw_mode_banner(self, frame: np.ndarray, current_mode: MissionMode) -> None:
+        """
+        Draws a centered top banner with black background + colored text.
+        """
+        text = self.mode_display_name(current_mode)
+        mode_key = current_mode.value
+        bg_color = (30, 30, 30)
+        accent_color = self.mode_colors[mode_key]
+
+        # Font settings
+        font = cv2.FONT_HERSHEY_DUPLEX
+        font_scale = 0.6
+        thickness = 2
+
+        # Get text size
+        (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+
+        # Banner padding
+        padding_x = 10
+        padding_y = 6
+        banner_w = text_w + 2 * padding_x
+        banner_h = text_h + baseline + 2 * padding_y
+
+        # Center at top
+        frame_h, frame_w = frame.shape[:2]
+        banner_x = (frame_w - banner_w) // 2 + 10
+        banner_y = 12  # distance from top
+
+        # Draw background rectangle (black/very dark)
+        cv2.rectangle(
+            frame,
+            (banner_x, banner_y),
+            (banner_x + banner_w, banner_y + banner_h),
+            bg_color,
+            cv2.FILLED,
+        )
+
+        cv2.rectangle(
+            frame,
+            (banner_x, banner_y),
+            (banner_x + banner_w, banner_y + banner_h),
+            accent_color,
+            thickness=2,
+        )
+
+        # Draw text (centered inside banner)
+        text_x = banner_x + padding_x
+        text_y = banner_y + padding_y + text_h
+
+        cv2.putText(
+            frame,
+            text,
+            (text_x, text_y),
+            font,
+            font_scale,
+            accent_color,
+            thickness,
+            cv2.LINE_AA,
+        )
 
     def annotate_frame(
         self,
@@ -27,7 +216,9 @@ class Visualizer:
         weighted_map: np.ndarray | None = None,
         hazard_points: np.ndarray | None = None,
     ) -> np.ndarray:
+
         current_mode = mission_manager.current_mode
+        current_mode_color = self.mode_colors[current_mode.value]
 
         img = frame.copy()
         h, w = frame.shape[:2]
@@ -41,13 +232,13 @@ class Visualizer:
         # Draw points
         for pt in new_pts:
             x, y = map(int, pt.ravel())
-            cv2.circle(img, (x, y), 4, (0, 0, 255), -1)
+            cv2.circle(img, (x, y), 4, (100, 255, 200), -1)
 
         # Draw new trails
         for new, old in zip(new_pts, old_pts):
             a, b = map(int, new.ravel())
             c, d = map(int, old.ravel())
-            cv2.line(trail_mask, (a, b), (c, d), (0, 255, 200), 2)
+            cv2.line(trail_mask, (a, b), (c, d), (100, 255, 200), 2)
 
         # Blend
         img = cv2.addWeighted(img, 1.0, trail_mask, 0.15, 0)
@@ -69,31 +260,43 @@ class Visualizer:
         dist_to_search_zone_cm = np.hypot(dx_to_search_zone_cm, dy_to_search_zone_cm)
 
         # Navigation arrow (only in pure navigation mode)
-        if current_mode == MissionMode.NAVIGATION:
-            direction = np.array([dx_to_search_zone_cm, -dy_to_search_zone_cm])
-            direction /= dist_to_search_zone_cm
-            max_len = self.config.navigation.arrow_max_length_px
-            arrow_length_px = min(
-                cm_to_pixels(dist_to_search_zone_cm, pos_z, self.focal_px), max_len
-            )
-            end_point = center + (direction * arrow_length_px).astype(int)
-            cv2.arrowedLine(
-                img,
-                tuple(center.astype(int)),
-                tuple(map(int, end_point)),
-                (255, 200, 0),
-                6,
-                tipLength=0.3,
-            )
-            cv2.putText(
-                img,
-                f"Target: {dist_to_search_zone_cm:.1f} cm",
-                (10, 120),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 200, 0),
-                2,
-            )
+        if not mission_manager.in_landing_phase:
+            if current_mode == MissionMode.ASCENT:
+                cv2.putText(
+                    img,
+                    f"Altitude: {pos_z:.1f} cm",
+                    (10, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    current_mode_color,
+                    2,
+                )
+
+            if current_mode == MissionMode.NAVIGATION:
+                direction = np.array([dx_to_search_zone_cm, -dy_to_search_zone_cm])
+                direction /= dist_to_search_zone_cm
+                max_len = self.config.navigation.arrow_max_length_px
+                arrow_length_px = min(
+                    cm_to_pixels(dist_to_search_zone_cm, pos_z, self.focal_px), max_len
+                )
+                end_point = center + (direction * arrow_length_px).astype(int)
+                cv2.arrowedLine(
+                    img,
+                    tuple(center.astype(int)),
+                    tuple(map(int, end_point)),
+                    current_mode_color,
+                    6,
+                    tipLength=0.3,
+                )
+                cv2.putText(
+                    img,
+                    f"Target: {dist_to_search_zone_cm:.1f} cm",
+                    (10, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    current_mode_color,
+                    2,
+                )
 
         # === Heatmap + Search Zone (only in landing phases) ===
         else:
@@ -136,7 +339,7 @@ class Visualizer:
 
                 cv2.addWeighted(heatmap_masked, alpha, overlay, 1 - alpha, 0, overlay)
 
-            # Faint grid (unchanged)
+            # Faint grid
             gs = self.config.hazard.grid_size
             ch, cw = h // gs, w // gs
             for r in range(gs):
@@ -148,22 +351,9 @@ class Visualizer:
             img = overlay
 
             # Search radius circle (centered on original target)
-            cv2.circle(img, target_px, outer_radius_px, (0, 255, 0), 4)
+            cv2.circle(img, target_px, outer_radius_px, current_mode_color, 4)
 
-            if current_mode == MissionMode.SEARCHING:
-                header_text = "SEARCHING"
-                header_color = (0, 165, 255)
-                cv2.putText(
-                    img,
-                    header_text,
-                    (10, 120),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    header_color,
-                    2,
-                )
-
-            elif current_mode == MissionMode.LANDING_APPROACH:
+            if current_mode == MissionMode.LANDING_APPROACH:
                 landing_site_pixel = center + np.array(
                     [
                         cm_to_pixels(
@@ -174,17 +364,6 @@ class Visualizer:
                         ),
                     ]
                 ).astype("int")
-                header_text = "APPROACHING SAFE SITE"
-                header_color = (0, 255, 255)
-                cv2.putText(
-                    img,
-                    header_text,
-                    (10, 120),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    header_color,
-                    2,
-                )
                 cv2.circle(
                     img,
                     landing_site_pixel,
@@ -195,7 +374,7 @@ class Visualizer:
                             self.focal_px,
                         )
                     ),
-                    (0, 255, 0),
+                    current_mode_color,
                     4,
                 )
                 dist_to_locked_landing_target_cm = np.hypot(
@@ -205,25 +384,14 @@ class Visualizer:
                 cv2.putText(
                     img,
                     f"Safe Site: {dist_to_locked_landing_target_cm:.1f} cm",
-                    (10, 150),  # Below header
+                    (10, 90),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
+                    0.5,
+                    current_mode_color,
                     2,
                 )
 
             elif current_mode == MissionMode.DESCENT:
-                header_text = f"DESCENT"
-                header_color = (255, 0, 0)
-                cv2.putText(
-                    img,
-                    header_text,
-                    (10, 120),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    header_color,
-                    2,
-                )
                 landing_site_pixel = center + np.array(
                     [
                         cm_to_pixels(
@@ -237,10 +405,10 @@ class Visualizer:
                 cv2.putText(
                     img,
                     f"{pos_z:.1f}",
-                    landing_site_pixel,  # Below header
+                    landing_site_pixel,
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
-                    (255, 0, 0),
+                    current_mode_color,
                     2,
                 )
                 cv2.circle(
@@ -253,22 +421,11 @@ class Visualizer:
                             self.focal_px,
                         )
                     ),
-                    (0, 255, 0),
+                    current_mode_color,
                     4,
                 )
 
             elif current_mode == MissionMode.HOVERING:
-                header_text = "HOVERING"
-                header_color = (0, 255, 0)
-                cv2.putText(
-                    img,
-                    header_text,
-                    (10, 120),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    header_color,
-                    2,
-                )
                 landing_site_pixel = center + np.array(
                     [
                         cm_to_pixels(
@@ -287,7 +444,7 @@ class Visualizer:
                     landing_site_pixel,  # Below header
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
-                    (0, 255, 0),
+                    current_mode_color,
                     2,
                 )
                 cv2.circle(
@@ -300,43 +457,8 @@ class Visualizer:
                             self.focal_px,
                         )
                     ),
-                    (0, 255, 0),
+                    current_mode_color,
                     4,
-                )
-
-            elif current_mode == MissionMode.LANDED_SAFE:
-                cv2.putText(
-                    img,
-                    "MISSION COMPLETE",
-                    (w // 2 - 180, h // 2 + 20),
-                    cv2.FONT_HERSHEY_DUPLEX,
-                    1.2,
-                    (0, 255, 0),
-                    4,
-                )
-
-            elif current_mode == MissionMode.NO_SAFE_ZONE:
-                warning_text = "NO SAFE LANDING ZONE FOUND"
-                text_size = cv2.getTextSize(
-                    warning_text, cv2.FONT_HERSHEY_DUPLEX, 1.0, 3
-                )[0]
-                text_x = (w - text_size[0]) // 2
-                text_y = h // 2 + 20
-                cv2.rectangle(
-                    img,
-                    (text_x - 20, text_y - text_size[1] - 20),
-                    (text_x + text_size[0] + 20, text_y + 20),
-                    (0, 0, 255),
-                    -1,
-                )
-                cv2.putText(
-                    img,
-                    warning_text,
-                    (text_x, text_y),
-                    cv2.FONT_HERSHEY_DUPLEX,
-                    1.0,
-                    (255, 255, 255),
-                    3,
                 )
 
         # Standard info
@@ -345,7 +467,7 @@ class Visualizer:
             f"Pos: ({pos_x:+.1f}, {pos_y:+.1f}, {pos_z:.1f}) cm",
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
+            0.5,
             (255, 255, 255),
             2,
         )
@@ -368,18 +490,18 @@ class Visualizer:
         cv2.putText(
             img,
             f"Features: {num_features}",
-            (10, 90),
+            (10, 60),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
+            0.5,
             (255, 255, 255),
             2,
         )
         cv2.putText(
             img,
-            "r = reset pos | q = quit",
+            "reset: r, quit: q",
             (10, h - 20),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
+            0.5,
             (200, 200, 200),
             2,
         )
@@ -387,4 +509,8 @@ class Visualizer:
         size = 20
         cv2.line(img, (cx - size, cy), (cx + size, cy), (255, 255, 255), 2)
         cv2.line(img, (cx, cy - size), (cx, cy + size), (255, 255, 255), 2)
+
+        self.draw_mode_banner(img, current_mode)
+        self.draw_altitude_progress_bars(img, mission_manager, pos_z=pos_z)
+
         return img

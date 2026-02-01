@@ -15,6 +15,14 @@ picam2.start()
 # Display the stream for 5 seconds (adjust as needed)
 time.sleep(10)
 
+image_array = picam2.capture_array()
+
+
 # Stop the camera
 picam2.stop()
 picam2.stop_preview()
+
+import cv2
+
+image_name = "/home/kyle/repos/Autonomous-Navigation/archive/banner.jpeg"
+cv2.imwrite(image_name, image_array)

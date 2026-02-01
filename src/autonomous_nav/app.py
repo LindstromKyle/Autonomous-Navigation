@@ -14,7 +14,10 @@ from autonomous_nav.feature_detector import ShiTomasiDetector
 from autonomous_nav.optical_flow import OpticalFlowModule
 from autonomous_nav.state_estimator import StateEstimator
 from autonomous_nav.imu import IMUModule
-from autonomous_nav.hazard_avoidance import ClearanceBasedHazardAvoidance
+from autonomous_nav.hazard_avoidance import (
+    AIHazardAvoidance,
+    ClearanceBasedHazardAvoidance,
+)
 from autonomous_nav.utils import cm_to_pixels, pixels_to_cm
 from autonomous_nav.visualizer import Visualizer
 from autonomous_nav.mission_manager import MissionManager
@@ -44,7 +47,7 @@ class AutonomousNavigationApp:
         state = StateEstimator(self.config)
 
         lidar = LidarModule(self.config.lidar)
-        hazard_detector = ClearanceBasedHazardAvoidance(self.config.hazard, self.config)
+        hazard_detector = AIHazardAvoidance(self.config.hazard, self.config)
         visualizer = Visualizer(self.config)
 
         # New: Mission Manager

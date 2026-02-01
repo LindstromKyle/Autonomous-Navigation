@@ -126,7 +126,7 @@ class AIHazardAvoidance(HazardAvoidance):
     def __init__(self, config: HazardConfig, global_config: AppConfig):
         super().__init__(config, global_config)
         self.model = YOLO(
-            "/home/kyle/repos/Autonomous-Navigation/examples/AI/full_marsdata_v2.pt"
+            "/home/kyle/repos/Autonomous-Navigation/examples/AI/mars_rocks_custom.pt"
         )
         # Warm-up
         dummy = np.zeros((320, 320, 3), dtype=np.uint8)
