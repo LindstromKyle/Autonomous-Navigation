@@ -11,6 +11,7 @@ class GlobalConfig:
     countdown_duration: float = 3.5
     initial_height: float = 45.0
     final_height: float = 35.0
+    save_frames: bool = True
 
 
 @dataclass
@@ -69,8 +70,8 @@ class LidarConfig:
 
 @dataclass
 class NavigationConfig:
-    planned_route_dx: float = 10.0
-    planned_route_dy: float = 0.0
+    planned_route_dx: float = 30.0
+    planned_route_dy: float = 15.0
     search_zone_inner_thresh: float = 2.0
     search_zone_outer_thresh: float = 15.0
     arrow_max_length_px: int = 250

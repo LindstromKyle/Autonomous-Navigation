@@ -8,12 +8,27 @@
 
 This project simulates an autonomous Martian helicopter (inspired by NASA's Ingenuity) capable of navigating harsh, dusty environments, detecting and avoiding hazards like rocks, and executing safe landings. Built using Python, OpenCV, and AI models, it fuses data from cameras, IMU, LiDAR, and optical flow for robust state estimation and decision-making. It runs on Raspberry Pi hardware with simulated Martian dust effects for realism.
 
+**Demo Video**
+
+![Demo video](readme_imgs/recording_20260201_203336.gif)
+
+
+
+## Dust & Detection Comparison
+
+| Clean Image                  | With Dust Simulation              |
+|------------------------------|-----------------------------------|
+| ![Clean](readme_imgs/no_dust.png)   | ![Noisy](readme_imgs/dusty.png)        |
+| **Dust + Shi-Tomasi Corners** | **Dust + YOLO Rock Detection**    |
+| ![Corners](readme_imgs/dusty_corners.png) | ![YOLO](readme_imgs/dusty_yolo.png)         |
+
+
 **Key achievements:**
 - Achieved reliable hazard avoidance in dusty conditions using AI
 - Fused multiple sensors for accurate positioning without GPS
 - Simulated complete missions from takeoff to safe landing
 
-[Watch a demo video](path/to/demo-video.mp4) (embed or link to YouTube/GIF)
+
 
 ## Table of Contents
 

@@ -140,7 +140,7 @@ class AIHazardAvoidance(HazardAvoidance):
         if frame is None:
             raise ValueError("AIHazardAvoidance requires the RGB frame")
 
-        results = self.model(frame, imgsz=320, conf=0.005, verbose=False)[0]
+        results = self.model(frame, imgsz=320, conf=0.15, verbose=False)[0]
 
         centroids = []
         for box in results.boxes:

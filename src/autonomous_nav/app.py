@@ -1,6 +1,9 @@
 import time
 import cv2
 import numpy as np
+import os
+from datetime import datetime
+import h5py
 from autonomous_nav.config import AppConfig
 from autonomous_nav.camera import CameraModule
 from autonomous_nav.dust import DustSimulator
@@ -27,6 +30,40 @@ class AutonomousNavigationApp:
 
     def __init__(self, config: AppConfig):
         self.config = config
+        self.recorded_frames = []
+
+    def save_frames_to_h5(self):
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = "/home/kyle/recordings"
+        os.makedirs(out_dir, exist_ok=True)
+        filename = os.path.join(out_dir, f"recording_{timestamp_str}.h5")
+
+        print(f"Saving frames to HDF5...")
+
+        with h5py.File(filename, "w") as f:
+            n_frames = len(self.recorded_frames)
+            height, width, channels = self.recorded_frames[0][1].shape
+
+            # Frames dataset
+            frames_dataset = f.create_dataset(
+                "frames",
+                shape=(n_frames, height, width, channels),
+                dtype=np.uint8,
+                chunks=(1, height // 2, width // 2, channels),
+                compression="gzip",
+                compression_opts=4,
+            )
+
+            # Timestamps
+            timestamp_dataset = f.create_dataset(
+                "timestamps", shape=(n_frames,), dtype=np.float64
+            )
+
+            for i, (timestamp, frame) in enumerate(self.recorded_frames):
+                frames_dataset[i] = frame
+                timestamp_dataset[i] = timestamp - self.recorded_frames[0][0]
+
+        print(f"Saved to: {filename}")
 
     def run(self):
 
@@ -47,7 +84,7 @@ class AutonomousNavigationApp:
         state = StateEstimator(self.config)
 
         lidar = LidarModule(self.config.lidar)
-        hazard_detector = AIHazardAvoidance(self.config.hazard, self.config)
+        hazard_detector = ClearanceBasedHazardAvoidance(self.config.hazard, self.config)
         visualizer = Visualizer(self.config)
 
         # New: Mission Manager
@@ -80,7 +117,7 @@ class AutonomousNavigationApp:
             frame_dt = max(current_time - last_frame_time, 0.025)
 
             frame = camera.capture_frame()
-            frame = self.dust_sim.apply_dust(frame)
+            # frame = self.dust_sim.apply_dust(frame)
             gray_raw = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
             gray = preprocessor.process(gray_raw)
             frame_count += 1
@@ -234,6 +271,9 @@ class AutonomousNavigationApp:
             old_gray = gray.copy()
             last_frame_time = current_time
 
+            if self.config.global_.save_frames:
+                self.recorded_frames.append((last_frame_time, annotated.copy()))
+
             key = cv2.waitKey(30) & 0xFF
             if key == ord("q"):
                 break
@@ -243,6 +283,9 @@ class AutonomousNavigationApp:
                 trail_mask = np.zeros_like(frame)
                 old_features = feature_detector.detect_features(gray)  # Redetect fresh
                 print("Full system reset")
+
+        if self.config.global_.save_frames:
+            self.save_frames_to_h5()
 
         camera.stop()
         lidar.stop()
