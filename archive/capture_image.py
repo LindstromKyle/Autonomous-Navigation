@@ -26,7 +26,6 @@ print("Data type:", image_array.dtype)
 plt.imshow(image_array)
 plt.show()
 
-# Optionally, save it to a file for visual check (requires OpenCV: pip install opencv-python)
 import cv2
 
 cv2.imwrite(image_name, image_array)

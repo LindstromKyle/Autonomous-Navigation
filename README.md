@@ -4,6 +4,16 @@
 
 *A Martian helicopter navigating dusty terrain, avoiding hazards, and landing safely.*
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Achievements](#key-achievements)
+- [Mission Architecture](#mission-architecture)
+- [Hardware](#hardware)
+- [Software](#software)
+- [Results](#results)
+- [Future Work](#future-work)
+
 ## Overview
 
 This project simulates an autonomous Martian helicopter (inspired by NASA's Ingenuity) capable of navigating harsh, dusty environments, detecting and avoiding hazards like rocks, and executing safe landings. Built using Python, OpenCV, and AI models, it fuses data from cameras, IMU, LiDAR, and optical flow for robust state estimation and decision-making. It runs on Raspberry Pi hardware with simulated Martian dust effects for realism.
@@ -13,34 +23,22 @@ This project simulates an autonomous Martian helicopter (inspired by NASA's Inge
 ![Demo video](readme_imgs/recording_20260201_203336.gif)
 
 
+## Key Achievements
 
-## Dust & Detection Comparison
-
-| Clean Image                  | With Dust Simulation              |
-|------------------------------|-----------------------------------|
-| ![Clean](readme_imgs/no_dust.png)   | ![Noisy](readme_imgs/dusty.png)        |
-| **Dust + Shi-Tomasi Corners** | **Dust + YOLO Rock Detection**    |
-| ![Corners](readme_imgs/dusty_corners.png) | ![YOLO](readme_imgs/dusty_yolo.png)         |
-
-
-**Key achievements:**
 - Achieved reliable hazard avoidance in dusty conditions using AI
 - Fused multiple sensors for accurate positioning without GPS
 - Simulated complete missions from takeoff to safe landing
 
+- **Multi-sensor Fusion** — Extended Kalman Filter combining optical flow, IMU & LiDAR
+- **Martian Dust Simulation** — Correlated noise + particle overlay with realistic drift
+- **AI Hazard Detection** — YOLOv8 model trained on custom Mars rock dataset  
+  → Dramatically more robust against dust particles than traditional corner detection
+- **Intelligent Safe Zone Selection** — Distance transform + weighted proximity/clearance scoring
+- **Stable Mission State Machine** — Hysteresis prevents mode-chattering
+- **Beautiful Real-time Visualization** — Trails, safety heatmaps, navigation arrows & status
 
 
-## Table of Contents
-
-- [Mission Goals](#mission-goals)
-- [Hardware Setup](#hardware-setup)
-- [Software Architecture](#software-architecture)
-- [Key Features and Innovations](#key-features-and-innovations)
-- [Challenges and Solutions](#challenges-and-solutions)
-- [Results and Demos](#results-and-demos)
-- [Future Work](#future-work)
-
-## Mission Goals
+## Mission Architecture
 
 The helicopter's mission simulates a Martian exploration scenario:
 
@@ -57,7 +55,9 @@ The helicopter's mission simulates a Martian exploration scenario:
 
 This mirrors real Mars challenges like low gravity, thin atmosphere, and dust storms.
 
-## Hardware Setup
+## Hardware
+
+<img src="readme_imgs/hardware.jpeg" alt="Hardware" width="30%"/>
 
 The system runs on a Raspberry Pi 4 with attached sensors to mimic a helicopter's payload.
 
@@ -68,15 +68,9 @@ The system runs on a Raspberry Pi 4 with attached sensors to mimic a helicopter'
 - **LiDAR (VL53L1X)** — Precise altitude measurement
 - **Custom Frame** — Mounted on a test rig for safe indoor testing
 
-![Hardware Image 1](path/to/hardware-setup.jpg)  
-*Raspberry Pi with attached camera, IMU, and LiDAR.*
-
-![Hardware Image 2](path/to/test-rig.jpg)  
-*Test rig simulating helicopter movement in a controlled "Martian" terrain box with rocks and dust.*
-
 > Note: No actual flight hardware is used — motion is simulated via manual movement or a robot base for demos.
 
-## Software Architecture
+## Software
 
 The codebase is modular and follows clean separation of concerns:
 
@@ -97,19 +91,9 @@ autonomous_nav/
 └── utils.py              # Helper functions (pixel ↔ cm conversions, etc.)
 
 
-This design makes it easy to swap components (e.g. classical vs. AI hazard detection).
+## Results
 
-## Key Features and Innovations
-
-- **Multi-sensor Fusion** — Extended Kalman Filter combining optical flow, IMU & LiDAR
-- **Martian Dust Simulation** — Correlated noise + particle overlay with realistic drift
-- **AI Hazard Detection** — YOLOv8 model trained on custom Mars rock dataset  
-  → Dramatically more robust against dust particles than traditional corner detection
-- **Intelligent Safe Zone Selection** — Distance transform + weighted proximity/clearance scoring
-- **Stable Mission State Machine** — Hysteresis prevents mode-chattering
-- **Beautiful Real-time Visualization** — Trails, safety heatmaps, navigation arrows & status
-
-## Challenges and Solutions
+**Chalenges and Solutions:**
 
 | Challenge                               | Solution                                                                                   |
 |-----------------------------------------|--------------------------------------------------------------------------------------------|
@@ -120,7 +104,15 @@ This design makes it easy to swap components (e.g. classical vs. AI hazard detec
 | Initial orientation/tilt errors         | Gravity-based automatic initial quaternion alignment during IMU calibration              |
 
 
-## Results and Demos
+| Clean Image                  | With Dust Simulation              |
+|------------------------------|-----------------------------------|
+| ![Clean](readme_imgs/no_dust.png)   | ![Noisy](readme_imgs/dusty.png)        |
+| **Dust + Shi-Tomasi Corners** | **Dust + YOLO Rock Detection**    |
+| ![Corners](readme_imgs/dusty_corners.png) | ![YOLO](readme_imgs/dusty_yolo.png)         |
+
+This design makes it easy to swap components (e.g. classical vs. AI hazard detection).
+
+
 Video 1: Complete Mission
 Full Mission
 Navigation → hazard avoidance → safe autonomous landing in dusty conditions
@@ -139,3 +131,5 @@ Real drone flight integration (DroneKit / PX4)
 Visual SLAM for unknown terrain mapping
 Multi-robot coordination
 Outdoor Mars-analog field testing
+
+## Future Work

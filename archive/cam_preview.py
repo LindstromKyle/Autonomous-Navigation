@@ -24,5 +24,11 @@ picam2.stop_preview()
 
 import cv2
 
-image_name = "/home/kyle/repos/Autonomous-Navigation/archive/banner.jpeg"
-cv2.imwrite(image_name, image_array)
+image_name = "/home/kyle/repos/Autonomous-Navigation/readme_imgs/hardware.jpeg"
+cv2.imwrite(
+    image_name,
+    cv2.cvtColor(
+        image_array,
+        cv2.COLOR_BGR2RGB,
+    ),
+)
