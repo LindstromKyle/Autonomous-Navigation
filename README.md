@@ -34,7 +34,7 @@ The drone uses a downward-facing camera for optical flow velocity estimation usi
 
 ## Hardware
 
-<img src="readme_imgs/hardware.jpeg" alt="Hardware" width="55%"/>
+<img src="readme_imgs/hardware.jpeg" alt="Hardware" width="65%"/>
 
 *The system runs on a Raspberry Pi 5 with several attached sensors to mimic a drone helicopter's payload.*
 
