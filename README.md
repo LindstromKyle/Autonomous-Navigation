@@ -1,6 +1,6 @@
 # Martian Helicopter Autonomous Navigation Project
 
-<img src="readme_imgs/banner.jpeg" alt="Project screenshot" width="90%"/>
+<img src="readme_imgs/banner.jpeg" alt="Project screenshot" width="100%"/>
 
 ## Table of Contents
 
@@ -34,7 +34,7 @@ The drone uses a downward-facing camera for optical flow velocity estimation usi
 
 ## Hardware
 
-<img src="readme_imgs/hardware.jpeg" alt="Hardware" width="45%"/>
+<img src="readme_imgs/hardware.jpeg" alt="Hardware" width="55%"/>
 
 *The system runs on a Raspberry Pi 5 with several attached sensors to mimic a drone helicopter's payload.*
 
