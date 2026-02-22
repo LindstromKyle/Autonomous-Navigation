@@ -138,7 +138,7 @@ class AIHazardAvoidance(HazardAvoidance):
         super().__init__(config, global_config)
         # Set up network
         self.model = YOLO(
-            "/home/kyle/repos/Autonomous-Navigation/examples/AI/mars_rocks_custom.pt"
+            "/home/kyle/repos/Autonomous-Navigation/src/autonomous_nav/model/mars_rocks_custom.pt"
         )
         dummy = np.zeros((320, 320, 3), dtype=np.uint8)
         self.model(dummy, verbose=False)
