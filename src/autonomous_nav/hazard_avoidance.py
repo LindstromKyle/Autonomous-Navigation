@@ -7,6 +7,10 @@ from ultralytics import YOLO
 
 
 class HazardAvoidance(ABC):
+    """
+    ABC for hazard avoidance module
+    """
+
     def __init__(self, config: HazardConfig, global_config: AppConfig):
         self.config = config
         self.global_config = global_config.global_
@@ -19,8 +23,7 @@ class HazardAvoidance(ABC):
         frame: np.ndarray | None = None,
     ) -> np.ndarray:
         """
-        Subclass implements this to produce hazard points (N, 2) float32 array.
-        Returns empty array if no hazards.
+        Subclasses must implement this method
         """
         pass
 
@@ -37,20 +40,18 @@ class HazardAvoidance(ABC):
         float | None, float | None, np.ndarray, tuple[int, int] | None, np.ndarray
     ]:
         """
-        Main public method — delegates to compute_hazards then processes.
+        Computes a safe zone based on hazards in the input image
         """
-        # Let subclass generate hazard points using whatever input it needs
+
+        # Generate hazard points based on subclass
         self.hazard_points = self.compute_hazards(
             features=features.reshape(-1, 2) if features.size > 0 else None,
             frame=frame,
         )
 
-        # If no hazards detected, treat entire frame as safe (or handle as needed)
+        # If no hazards detected, treat entire frame as safe
         if self.hazard_points.size == 0:
             self.hazard_points = np.empty((0, 2), dtype=np.float32)
-
-        gs = self.config.grid_size
-        ch, cw = frame_height // gs, frame_width // gs
 
         # Binary hazard image
         hazard_img = np.full((frame_height, frame_width), 255, dtype=np.uint8)
@@ -111,6 +112,11 @@ class HazardAvoidance(ABC):
 
 
 class ClearanceBasedHazardAvoidance(HazardAvoidance):
+    """
+    This class simple re-uses the corners from the Shi-Tomasi feature detector as
+    landing site hazards
+    """
+
     def compute_hazards(
         self,
         features: np.ndarray | None = None,
@@ -123,12 +129,17 @@ class ClearanceBasedHazardAvoidance(HazardAvoidance):
 
 
 class AIHazardAvoidance(HazardAvoidance):
+    """
+    This class runs an AI based neural network against the input frame to determine
+    landing site hazards
+    """
+
     def __init__(self, config: HazardConfig, global_config: AppConfig):
         super().__init__(config, global_config)
+        # Set up network
         self.model = YOLO(
             "/home/kyle/repos/Autonomous-Navigation/examples/AI/mars_rocks_custom.pt"
         )
-        # Warm-up
         dummy = np.zeros((320, 320, 3), dtype=np.uint8)
         self.model(dummy, verbose=False)
 
@@ -137,15 +148,20 @@ class AIHazardAvoidance(HazardAvoidance):
         features: np.ndarray | None = None,
         frame: np.ndarray | None = None,
     ) -> np.ndarray:
+        """
+        Runs the network on the input image
+        """
         if frame is None:
             raise ValueError("AIHazardAvoidance requires the RGB frame")
 
+        # Run network
         results = self.model(frame, imgsz=320, conf=0.15, verbose=False)[0]
 
+        # Grab centroids from bboxes
         centroids = []
         for box in results.boxes:
             cls_id = int(box.cls[0].item())
-            if cls_id == 0:  # Adjust if your rock class is different
+            if cls_id == 0:
                 x1, y1, x2, y2 = map(float, box.xyxy[0])
                 centroids.append([(x1 + x2) / 2, (y1 + y2) / 2])
 

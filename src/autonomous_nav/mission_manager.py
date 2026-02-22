@@ -16,20 +16,24 @@ class MissionMode(Enum):
 
 
 class MissionManager:
+    """
+    Mission manager module
+    """
+
     def __init__(self, config: AppConfig):
+        # Set up params from config
         self.config = config
         self.current_mode = MissionMode.ASCENT
         self.previous_mode = None
-
         self.planned_route_dx = config.navigation.planned_route_dx
         self.planned_route_dy = config.navigation.planned_route_dy
         self.search_zone_inner_thresh = config.navigation.search_zone_inner_thresh
         self.search_zone_outer_thresh = config.navigation.search_zone_outer_thresh
-
-        # New: Configurable stability (hysteresis) in frames
         self.stability_frames = config.navigation.landing_mode_stability_frames
+        self.pos_tolerance_cm = config.navigation.pos_tolerance_cm
+        self.hover_duration_s = config.navigation.hover_duration_s
 
-        # Landing site lock (world coordinates)
+        # Landing site lock
         self.locked_landing_target_x_cm: float | None = None
         self.locked_landing_target_y_cm: float | None = None
 
@@ -37,17 +41,17 @@ class MissionManager:
         self.hover_start_time: float | None = None
 
         # Hysteresis counters
-        self.safe_count = 0  # Consecutive frames with safe_center_px available
-        self.no_safe_count = 0  # Consecutive frames with no safe_center_px
+        self.safe_count = 0
+        self.no_safe_count = 0
 
-        # Tolerances from config
-        self.pos_tolerance_cm = config.navigation.pos_tolerance_cm
-        self.hover_duration_s = config.navigation.hover_duration_s
-
+        # Landing site coords
         self.safe_xs = []
         self.safe_ys = []
 
     def reset(self):
+        """
+        Reset mission manager back to NAVIGATION mode
+        """
         self.current_mode = MissionMode.NAVIGATION
         self.previous_mode = None
         self._reset_landing()
@@ -61,27 +65,33 @@ class MissionManager:
         current_frame_safe_dy_cm: float | None,
         current_frame_safe_px: tuple[int, int] | None,
     ) -> MissionMode:
+        """
+        Check current state and updates mission manager if criteria for new mode
+        are met
+        """
+
         dist_to_search_center = np.hypot(
             self.planned_route_dx - pos_x, self.planned_route_dy - pos_y
         )
         inside_inner = dist_to_search_center < self.search_zone_inner_thresh
         outside_outer = dist_to_search_center > self.search_zone_outer_thresh
-
         has_safe_spot = current_frame_safe_px is not None
-
         new_mode = self.current_mode
 
+        # Check ascent criteria
         if self.current_mode == MissionMode.ASCENT:
             if pos_z >= self.config.global_.initial_height:
                 new_mode = MissionMode.NAVIGATION
 
+        # Check navigation criteria
         elif self.current_mode == MissionMode.NAVIGATION:
             if inside_inner:
                 new_mode = MissionMode.SEARCHING
             else:
-                # Far from target — reset counters
+                # Far from target, reset counters
                 self._reset_counters()
 
+        # Check searching criteria
         elif self.current_mode == MissionMode.SEARCHING:
             if has_safe_spot:
                 self.safe_count += 1
@@ -104,6 +114,7 @@ class MissionManager:
                     new_mode = MissionMode.NO_SAFE_ZONE
                     self.no_safe_count = 0
 
+        # Check landing approach criteria
         elif self.current_mode == MissionMode.LANDING_APPROACH:
             if outside_outer:
                 self._reset_landing()
@@ -126,15 +137,15 @@ class MissionManager:
                 else:
                     self.safe_count += 1
                     self.no_safe_count = 0
-                    # Optionally re-lock to better spot if significantly improved
-                    # (not implemented here to keep lock stable)
 
+        # Check descent criteria
         elif self.current_mode == MissionMode.DESCENT:
             if pos_z <= self.config.global_.final_height:
                 new_mode = MissionMode.HOVERING
                 if self.hover_start_time is None:
                     self.hover_start_time = time.time()
 
+        # Check hovering criteria
         elif self.current_mode == MissionMode.HOVERING:
             # Check distance to locked landing target
             dist_to_landing = np.hypot(
@@ -161,8 +172,9 @@ class MissionManager:
                 self.safe_count += 1
                 self.no_safe_count = 0
 
+        # Check no safe zone criteria
         elif self.current_mode == MissionMode.NO_SAFE_ZONE:
-            if outside_outer:  # NEW: Use outer threshold to exit
+            if outside_outer:
                 self._reset_landing()
                 new_mode = MissionMode.NAVIGATION
             elif has_safe_spot:
@@ -172,8 +184,9 @@ class MissionManager:
             else:
                 self.safe_count = 0
 
+        # Check landed safe criteria
         elif self.current_mode == MissionMode.LANDED_SAFE:
-            if outside_outer:  # NEW: Use outer threshold to exit
+            if outside_outer:
                 self._reset_landing()
                 new_mode = MissionMode.NAVIGATION
 
@@ -182,21 +195,30 @@ class MissionManager:
             self.previous_mode = self.current_mode
             self.current_mode = new_mode
             print(
-                f"[MissionManager] Mode change: {self.previous_mode.value} → {new_mode.value}"
+                f"[MissionManager] Mode change: {self.previous_mode.value} to {new_mode.value}"
             )
 
     def _reset_landing(self):
+        """
+        Undo the lock on the target landing site, reset stability frame counters
+        """
         self.locked_landing_target_x_cm = None
         self.locked_landing_target_y_cm = None
         self.hover_start_time = None
         self._reset_counters()
 
     def _reset_counters(self):
+        """
+        Set stability frame counters to zero
+        """
         self.safe_count = 0
         self.no_safe_count = 0
 
     @property
     def in_landing_phase(self) -> bool:
+        """
+        Helper function to check if drone is in any of the landing modes
+        """
         return self.current_mode in (
             MissionMode.LANDING_APPROACH,
             MissionMode.SEARCHING,
@@ -207,9 +229,15 @@ class MissionManager:
         )
 
     def is_hovering(self) -> bool:
+        """
+        Helper function to determin if drone is currently hovering
+        """
         return self.hover_start_time is not None
 
     def get_hover_remaining_s(self) -> float | None:
+        """
+        Computes how long is left in the hover countdown
+        """
         if self.hover_start_time is None:
             return None
         elapsed = time.time() - self.hover_start_time

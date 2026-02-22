@@ -4,12 +4,19 @@ from autonomous_nav.config import OpticalFlowConfig
 
 
 class OpticalFlowModule:
+    """
+    Optical flow velocity estimation module
+    """
+
     def __init__(self, config: OpticalFlowConfig):
         self.config = config
 
     def track_features(
         self, old_gray: np.ndarray, new_gray: np.ndarray, old_features: np.ndarray
     ) -> tuple[np.ndarray | None, np.ndarray]:
+        """
+        Track features from one frame to the next
+        """
         new_features, status, _ = cv2.calcOpticalFlowPyrLK(
             old_gray,
             new_gray,
@@ -27,6 +34,9 @@ class OpticalFlowModule:
         status: np.ndarray,
         old_features: np.ndarray,
     ) -> tuple[float, float]:
+        """
+        Using the tracked features, compute the median flow velocity
+        """
         if new_features is None or len(new_features) == 0:
             return 0.0, 0.0
 
@@ -37,4 +47,4 @@ class OpticalFlowModule:
             return 0.0, 0.0
 
         flow = valid_new.reshape(-1, 2) - valid_old.reshape(-1, 2)
-        return np.median(flow[:, 0]), np.median(flow[:, 1])  # dx, dy in pixels
+        return np.median(flow[:, 0]), np.median(flow[:, 1])

@@ -1,29 +1,34 @@
-import os
 import qwiic_icm20948
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 import time
 from autonomous_nav.config import IMUConfig
 
 
 class IMUModule:
+    """
+    IMU module
+    """
+
     def __init__(self, config: IMUConfig):
+        # Set up config params
         self.config = config
         self.imu = qwiic_icm20948.QwiicIcm20948()
         if not self.imu.connected:
             raise Exception("IMU not connected!")
         self.imu.begin()
 
+        # Calibrate IMU biases
         print("Calibrating gyro bias and initial orientation...")
         self.calibrate_biases()
         print(f"Calibrated gyro bias (g), gyro={self.gyro_bias} (deg/s)")
-
         self.last_time = time.time()
 
     def calibrate_biases(self):
+        """
+        Calibration sequence for IMU biases
+        """
         accel_samples = []
         gyro_samples = []
-        print("Calibrating IMU biases...")
 
         for _ in range(self.config.bias_calibration_samples):
             while not self.imu.dataReady():
@@ -55,15 +60,12 @@ class IMUModule:
         avg_accel_g = np.mean(accel_samples, axis=0)
         avg_gyro = np.mean(gyro_samples, axis=0)
 
-        # === Gyro bias: simple average (should be near zero when stationary) ===
+        # Gyro bias: simple average
         self.gyro_bias = avg_gyro
 
-        # === Step 1: Compute gravity direction from raw average (handles initial tilt) ===
+        # Compute gravity direction from raw average
         accel_magnitude = np.linalg.norm(avg_accel_g)
-        gravity_dir_body = (
-            avg_accel_g / accel_magnitude
-        )  # Normalized vector in body frame
-
+        gravity_dir_body = avg_accel_g / accel_magnitude
         world_gravity_dir = np.array([0.0, 0.0, 1.0])
 
         # Compute initial quaternion to align body gravity to world gravity
@@ -72,7 +74,6 @@ class IMUModule:
         cross = np.cross(v1, v2)
         dot = np.dot(v1, v2)
         angle = np.arccos(np.clip(dot, -1.0, 1.0))
-
         if np.linalg.norm(cross) < 1e-6:
             init_q = (
                 np.array([1.0, 0.0, 0.0, 0.0])
@@ -104,6 +105,9 @@ class IMUModule:
         print(f"  Estimated tilt from level: ~{tilt_deg:.2f} degrees")
 
     def read(self) -> dict:
+        """
+        Reads data from IMU sensor
+        """
         if not self.imu.dataReady():
             return None
         self.imu.getAgmt()
@@ -111,7 +115,7 @@ class IMUModule:
         dt = time.time() - self.last_time
         self.last_time = time.time()
 
-        # Raw readings in standard order: X=ax, Y=ay, Z=az
+        # Raw readings
         accel_raw_x = self.imu.axRaw
         accel_raw_y = self.imu.ayRaw
         accel_raw_z = self.imu.azRaw
@@ -125,17 +129,13 @@ class IMUModule:
         gyro_raw = np.array([gyro_raw_x, gyro_raw_y, gyro_raw_z])
 
         # Convert to physical units
-        accel_g_body = accel_raw / self.config.accel_sensitivity
-        gyro_deg_s_body = gyro_raw / self.config.gyro_sensitivity
-
-        # Fix
-        accel_g = accel_g_body
-        gyro_deg_s = gyro_deg_s_body
+        accel_g = accel_raw / self.config.accel_sensitivity
+        gyro_deg_s = gyro_raw / self.config.gyro_sensitivity
 
         # Subtract bias
         gyro_deg_s -= self.gyro_bias
 
-        # To cm/s²
+        # Convert to cm/s²
         accel_cm_s2 = accel_g * 980.665
 
         return {

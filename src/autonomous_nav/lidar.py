@@ -6,6 +6,10 @@ from autonomous_nav.config import LidarConfig
 
 
 class LidarModule:
+    """
+    Lidar Module
+    """
+
     def __init__(self, config: LidarConfig):
         self.i2c = board.I2C()
         self.vl53 = adafruit_vl53l1x.VL53L1X(self.i2c)
@@ -15,6 +19,10 @@ class LidarModule:
         self.last_time = time.time()
 
     def read(self) -> dict | None:
+        """
+        Reads data from lidar sensor
+        """
+
         if self.vl53.data_ready:
             dist_cm = self.vl53.distance
             self.vl53.clear_interrupt()
@@ -25,4 +33,7 @@ class LidarModule:
         return None
 
     def stop(self):
+        """
+        Stops the lidar sensor
+        """
         self.vl53.stop_ranging()

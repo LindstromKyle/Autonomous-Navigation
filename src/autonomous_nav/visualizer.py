@@ -6,6 +6,10 @@ from autonomous_nav.utils import cm_to_pixels
 
 
 class Visualizer:
+    """
+    Visualizer module
+    """
+
     def __init__(self, config: AppConfig):
         self.config = config
         self.focal_px = config.global_.focal_length_px
@@ -21,6 +25,9 @@ class Visualizer:
         }
 
     def mode_display_name(self, current_mode: MissionMode) -> str:
+        """
+        Generate banner from mission manager mode text
+        """
         return current_mode.value.replace("_", " ").upper()
 
     def draw_altitude_progress_bars(
@@ -31,12 +38,10 @@ class Visualizer:
         pos_z: float,
     ) -> None:
         """
-        Draws a vertical progress bar on the left side:
-        - ASCENT:   fills upward (bottom → top) toward target height
-        - DESCENT:  empties downward (top → bottom) toward final height
-        Hides in other modes.
+        Draws a vertical progress bar for ascent and descent modes
         """
 
+        # Bar params
         bar_width = 15
         bar_height = 100
         x_left = 200
@@ -44,12 +49,14 @@ class Visualizer:
         bg_color: tuple = (40, 40, 40)
         border_color: tuple = (180, 180, 180)
 
+        # Check mode
         if current_mode not in (
             MissionMode.ASCENT,
             MissionMode.DESCENT,
         ):
             return
 
+        # Compute bar fill percent
         target_ascent_m = self.config.global_.initial_height
         target_descent_m = self.config.global_.final_height
         x_right = x_left + bar_width
@@ -59,7 +66,8 @@ class Visualizer:
         fill_color = current_mode_color
         fill_h = int(bar_height * progress)
         fill = y_bottom - fill_h
-        # Background (dark)
+
+        # Background
         cv2.rectangle(frame, (x_left, y_top), (x_right, y_bottom), bg_color, cv2.FILLED)
 
         # Normalize progress
@@ -68,7 +76,7 @@ class Visualizer:
             cv2.rectangle(
                 frame, (x_left, fill), (x_right, y_bottom), fill_color, cv2.FILLED
             )
-        else:  # DESCENT
+        else:
             cv2.rectangle(
                 frame, (x_left, fill), (x_right, y_bottom), fill_color, cv2.FILLED
             )
@@ -78,6 +86,7 @@ class Visualizer:
             frame, (x_left, y_top), (x_right, y_bottom), border_color, thickness=2
         )
 
+        # Altitude text
         font = cv2.FONT_HERSHEY_DUPLEX
         font_scale = 0.7
         thick = 1
@@ -108,8 +117,10 @@ class Visualizer:
 
     def draw_mode_banner(self, frame: np.ndarray, current_mode: MissionMode) -> None:
         """
-        Draws a centered top banner with black background + colored text.
+        Draws a centered top banner with black background and colored text
         """
+
+        # Set up text
         text = self.mode_display_name(current_mode)
         mode_key = current_mode.value
         bg_color = (30, 30, 30)
@@ -132,9 +143,9 @@ class Visualizer:
         # Center at top
         frame_h, frame_w = frame.shape[:2]
         banner_x = (frame_w - banner_w) // 2 + 10
-        banner_y = 12  # distance from top
+        banner_y = 12
 
-        # Draw background rectangle (black/very dark)
+        # Draw rectangles
         cv2.rectangle(
             frame,
             (banner_x, banner_y),
@@ -142,7 +153,6 @@ class Visualizer:
             bg_color,
             cv2.FILLED,
         )
-
         cv2.rectangle(
             frame,
             (banner_x, banner_y),
@@ -151,10 +161,9 @@ class Visualizer:
             thickness=2,
         )
 
-        # Draw text (centered inside banner)
+        # Draw text
         text_x = banner_x + padding_x
         text_y = banner_y + padding_y + text_h
-
         cv2.putText(
             frame,
             text,
@@ -182,24 +191,31 @@ class Visualizer:
         weighted_map: np.ndarray | None = None,
         hazard_points: np.ndarray | None = None,
     ) -> np.ndarray:
+        """
+        Generates frame annotations based on current mode and mission progress
+        """
 
+        # Grab mode
         current_mode = mission_manager.current_mode
         current_mode_color = self.mode_colors[current_mode.value]
 
+        # Copy image
         img = frame.copy()
         h, w = frame.shape[:2]
         cx, cy = w // 2, h // 2
         center = np.array([cx, cy])
 
+        # Grab state
         pos_x = state.position[0]
         pos_y = state.position[1]
         pos_z = state.position[2]
 
+        # Draw feature points - yellow circles
         feature_img = frame.copy()
-        # Draw points
         for pt in new_pts:
             x, y = map(int, pt.ravel())
             cv2.circle(feature_img, (x, y), 4, (100, 255, 200), -1)
+
         # Draw center indicator
         size = 20
         cv2.line(feature_img, (cx - size, cy), (cx + size, cy), (300, 300, 300), 3)
@@ -215,6 +231,7 @@ class Visualizer:
         # Blend
         img = cv2.addWeighted(img, 1.0, trail_mask, 0.15, 0)
 
+        # Draw hazards - red X's
         if hazard_points is not None and len(hazard_points) > 0:
             for pt in hazard_points:
                 x, y = map(int, pt.ravel())
@@ -228,12 +245,12 @@ class Visualizer:
                     2,
                 )
 
+        # Find safe zone distance
         overlay = img.copy()
         dist_to_search_zone_cm = np.hypot(dx_to_search_zone_cm, dy_to_search_zone_cm)
 
-        # Navigation arrow (only in pure navigation mode)
+        # Navigation arrow when in navigation mode
         if not mission_manager.in_landing_phase:
-
             if current_mode == MissionMode.NAVIGATION:
                 direction = np.array([dx_to_search_zone_cm, -dy_to_search_zone_cm])
                 direction /= dist_to_search_zone_cm
@@ -260,14 +277,13 @@ class Visualizer:
                     2,
                 )
 
-        # === Heatmap + Search Zone (only in landing phases) ===
+        # If in landing phase, heatmap and search zone
         else:
-            # Re-compute original target projection here (safe, inside this block)
+            # Compute target spot in pixels
             orig_target_x_cm = self.config.navigation.planned_route_dx
             orig_target_y_cm = self.config.navigation.planned_route_dy
             orig_remaining_x = orig_target_x_cm - pos_x
             orig_remaining_y = orig_target_y_cm - pos_y
-
             target_px_x = w // 2 + int(
                 cm_to_pixels(orig_remaining_x, pos_z, self.focal_px)
             )
@@ -276,6 +292,7 @@ class Visualizer:
             )
             target_px = (target_px_x, target_px_y)
 
+            # Compute outer search radius
             outer_radius_px = int(
                 cm_to_pixels(
                     self.config.navigation.search_zone_outer_thresh,
@@ -284,13 +301,14 @@ class Visualizer:
                 )
             )
 
+            # Heatmap
             if weighted_map is not None:
                 if np.max(weighted_map) > 0:
                     min_nonzero = np.min(weighted_map[weighted_map > 0])
-                    # Set zeros to just below min_nonzero (e.g., 99% of it for a small delta)
+                    # Adjust contrast for better display
                     weighted_map[weighted_map == 0] = min_nonzero * 0.99
-                    # If all zero, heatmap will normalize to flat zero (no contrast, which is fine)
 
+                # Convert distance transform to heatmap and apply to image
                 norm_map = cv2.normalize(weighted_map, None, 0, 255, cv2.NORM_MINMAX)
                 norm_map = norm_map.astype(np.uint8)
                 heatmap = cv2.applyColorMap(norm_map, cv2.COLORMAP_VIRIDIS)
@@ -298,14 +316,13 @@ class Visualizer:
                 mask = np.zeros((h, w), dtype=np.uint8)
                 cv2.circle(mask, target_px, outer_radius_px, 255, -1)
                 heatmap_masked = cv2.bitwise_and(heatmap, heatmap, mask=mask)
-
                 cv2.addWeighted(heatmap_masked, alpha, overlay, 1 - alpha, 0, overlay)
 
+            # Draw search radius circle
             img = overlay
-
-            # Search radius circle (centered on original target)
             cv2.circle(img, target_px, outer_radius_px, current_mode_color, 4)
 
+            # If in final approach, draw safe zone circle
             if current_mode == MissionMode.LANDING_APPROACH:
                 landing_site_pixel = center + np.array(
                     [
@@ -330,10 +347,11 @@ class Visualizer:
                     current_mode_color,
                     4,
                 )
+
+                # Display distance to final landing site
                 dist_to_locked_landing_target_cm = np.hypot(
                     dx_to_locked_landing_target_cm, dy_to_locked_landing_target_cm
                 )
-
                 cv2.putText(
                     img,
                     f"Safe Site: {dist_to_locked_landing_target_cm:.1f} cm",
@@ -345,6 +363,7 @@ class Visualizer:
                 )
 
             elif current_mode == MissionMode.DESCENT:
+                # Draw final landing site circle
                 landing_site_pixel = center + np.array(
                     [
                         cm_to_pixels(
@@ -369,6 +388,7 @@ class Visualizer:
                     4,
                 )
 
+            # If hovering, display hover countdown
             elif current_mode == MissionMode.HOVERING:
                 landing_site_pixel = center + np.array(
                     [
@@ -413,6 +433,8 @@ class Visualizer:
                     current_mode_color,
                     4,
                 )
+
+            # Landed safe!
             elif current_mode == MissionMode.LANDED_SAFE:
                 cv2.putText(
                     img,
@@ -433,7 +455,7 @@ class Visualizer:
                     4,
                 )
 
-        # Standard info
+        # Standard info for all modes
         cv2.putText(
             img,
             f"Pos: ({pos_x:+.1f}, {pos_y:+.1f}, {pos_z:.1f}) cm",
@@ -443,22 +465,6 @@ class Visualizer:
             (255, 255, 255),
             2,
         )
-        # Add orientation display: Convert quaternion to Euler angles (roll, pitch, yaw in degrees)
-        # q = state.state[6:10]  # [q_w, q_x, q_y, q_z]
-        # rot = R.from_quat([q[1], q[2], q[3], q[0]])  # SciPy expects [x, y, z, w]
-        # euler_deg = rot.as_euler("xyz", degrees=True)  # Roll (x), Pitch (y), Yaw (z)
-        # cv2.putText(
-        #     img,
-        #     f"Att: R:{euler_deg[0]:+.1f} P:{euler_deg[1]:+.1f} Y:{euler_deg[2]:+.1f} deg",
-        #     (10, 60),
-        #     cv2.FONT_HERSHEY_SIMPLEX,
-        #     0.6,
-        #     (255, 255, 255),
-        #     2,
-        # )
-        # print(
-        #     f"DEBUG - EULER = R:{euler_deg[0]:+.1f} P:{euler_deg[1]:+.1f} Y:{euler_deg[2]:+.1f} deg"
-        # )
         cv2.putText(
             img,
             f"Features: {num_features}",
@@ -469,8 +475,11 @@ class Visualizer:
             2,
         )
 
+        # Draw top banner
         self.draw_mode_banner(img, current_mode)
 
+        # Apply altitude progress bars if needed
         self.draw_altitude_progress_bars(img, current_mode, current_mode_color, pos_z)
 
+        # Return image with all annotations
         return img

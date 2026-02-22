@@ -15,7 +15,7 @@ from autonomous_nav.preprocessor import (
 )
 from autonomous_nav.feature_detector import ShiTomasiDetector
 from autonomous_nav.optical_flow import OpticalFlowModule
-from autonomous_nav.state_estimator import StateEstimator
+from autonomous_nav.state_estimator import InertialStateEstimator
 from autonomous_nav.imu import IMUModule
 from autonomous_nav.hazard_avoidance import (
     AIHazardAvoidance,
@@ -27,51 +27,26 @@ from autonomous_nav.mission_manager import MissionManager
 
 
 class AutonomousNavigationApp:
+    """
+    Main application module
+    """
 
     def __init__(self, config: AppConfig):
         self.config = config
         self.recorded_frames = []
 
-    def save_frames_to_h5(self):
-        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_dir = "/home/kyle/recordings"
-        os.makedirs(out_dir, exist_ok=True)
-        filename = os.path.join(out_dir, f"recording_{timestamp_str}.h5")
-
-        print(f"Saving frames to HDF5...")
-
-        with h5py.File(filename, "w") as f:
-            n_frames = len(self.recorded_frames)
-            height, width, channels = self.recorded_frames[0][1].shape
-
-            # Frames dataset
-            frames_dataset = f.create_dataset(
-                "frames",
-                shape=(n_frames, height, width, channels),
-                dtype=np.uint8,
-                chunks=(1, height // 2, width // 2, channels),
-                compression="gzip",
-                compression_opts=4,
-            )
-
-            # Timestamps
-            timestamp_dataset = f.create_dataset(
-                "timestamps", shape=(n_frames,), dtype=np.float64
-            )
-
-            for i, (timestamp, frame) in enumerate(self.recorded_frames):
-                frames_dataset[i] = frame
-                timestamp_dataset[i] = timestamp - self.recorded_frames[0][0]
-
-        print(f"Saved to: {filename}")
-
     def run(self):
+        """
+        Runs the main application loop
+        """
 
+        # Camera module
         camera = CameraModule(self.config)
 
-        self.dust_sim = DustSimulator(self.config)
+        # Dust simulator module
+        dust_sim = DustSimulator(self.config)
 
-        # Build preprocessor chain
+        # Preprocessing chain module
         preprocessors = []
         if self.config.preprocessor.clahe_enabled:
             preprocessors.append(CLAHEPreprocessor(self.config.preprocessor))
@@ -79,54 +54,81 @@ class AutonomousNavigationApp:
             preprocessors.append(GaussianBlurPreprocessor(self.config.preprocessor))
         preprocessor = PreprocessorPipeline(preprocessors)
 
+        # Feature detection module
         feature_detector = ShiTomasiDetector(self.config.feature_detector)
-        optical_flow = OpticalFlowModule(self.config.optical_flow)
-        state = StateEstimator(self.config)
 
+        # Optical flow module
+        optical_flow = OpticalFlowModule(self.config.optical_flow)
+
+        # State estimator module
+        state = InertialStateEstimator(self.config)
+
+        # Lidar module
         lidar = LidarModule(self.config.lidar)
-        hazard_detector = ClearanceBasedHazardAvoidance(self.config.hazard, self.config)
+
+        # Hazard detection module
+        hazard_detector = AIHazardAvoidance(self.config.hazard, self.config)
+
+        # Visualizer module
         visualizer = Visualizer(self.config)
 
-        # New: Mission Manager
+        # Mission manager module
         mission_manager = MissionManager(self.config)
 
         # Preview countdown
         camera.run_countdown_preview()
 
-        # imu = IMUModule(self.config.imu)
-        # state.state[6:10] = imu.init_quat.copy()
-        # state.normalize_quaternion()
+        # IMU module
+        imu = IMUModule(self.config.imu)
 
-        # Initial frame and features
+        # Initialize state
+        state.state[6:10] = imu.init_quat.copy()
+        state.normalize_quaternion()
+
+        # Initial frame
         old_frame = camera.capture_frame()
-        old_frame = self.dust_sim.apply_dust(old_frame)
+        old_frame = dust_sim.apply_dust(old_frame)
         last_frame_time = time.time()
+
+        # Grayscale
         old_gray = cv2.cvtColor(old_frame, cv2.COLOR_RGB2GRAY)
+
+        # Preprocess initial frame
         old_gray = preprocessor.process(old_gray)
+
+        # Detect initial features
         old_features = feature_detector.detect_features(old_gray)
         trail_mask = np.zeros_like(old_frame)
-
         frame_count = 0
 
-        print("\n=== Martian Rover Navigation ===")
+        print(f"\nStarting Martian Drone Navigation\n")
 
-        # imu.last_time = time.time()
+        # Begin loop
+        imu.last_time = time.time()
         time.sleep(0.02)
         while True:
+
+            # Calculate dt
             current_time = time.time()
             frame_dt = max(current_time - last_frame_time, 0.025)
 
+            # Capture image
             frame = camera.capture_frame()
-            # frame = self.dust_sim.apply_dust(frame)
+
+            # Apply dust
+            frame = dust_sim.apply_dust(frame)
+
+            # Grayscale
             gray_raw = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+
+            # Preprocessor chain
             gray = preprocessor.process(gray_raw)
             frame_count += 1
-
             h, w = gray.shape
 
+            # Track features
             valid_new_pts = np.empty((0, 1, 2))
             valid_old_pts = np.empty((0, 1, 2))
-
             if old_features is not None and len(old_features) > 0:
                 new_features, status = optical_flow.track_features(
                     old_gray, gray, old_features
@@ -135,17 +137,17 @@ class AutonomousNavigationApp:
                     valid_new_pts = new_features[status.ravel() == 1]
                     valid_old_pts = old_features[status.ravel() == 1]
 
+            # Compute median flow
             flow_dx_px, flow_dy_px = optical_flow.compute_median_flow(
                 new_features,
                 status if "status" in locals() else np.array([]),
                 old_features,
             )
 
-            # IMU predict state
-            # imu_data = imu.read()
-            # if imu_data:
-            #     state.predict(imu_data["accel"], imu_data["gyro"], imu_data["dt"])
-            state.predict(frame_dt)
+            # Predict state with IMU data
+            imu_data = imu.read()
+            if imu_data:
+                state.predict(imu_data["accel"], imu_data["gyro"], imu_data["dt"])
 
             # Visual velocity update
             vis_vel_x = (
@@ -161,9 +163,10 @@ class AutonomousNavigationApp:
                 / frame_dt
             )
             flow_mag = np.hypot(vis_vel_x, vis_vel_y)
+
+            # Zero velocity update
             if flow_mag < 0.5 and len(valid_new_pts) > 20:
-                # Zero-Velocity Update (ZUPT)
-                state.update_visual(0.0, 0.0)  # Forces velocity toward zero
+                state.update_visual(0.0, 0.0)
             else:
                 state.update_visual(vis_vel_x, vis_vel_y)
 
@@ -172,8 +175,8 @@ class AutonomousNavigationApp:
             if lidar_data:
                 state.update_lidar(lidar_data["distance_cm"])
 
+            # Redetect if needed
             old_features = valid_new_pts if valid_new_pts.size > 0 else None
-
             if (
                 old_features is None
                 or len(old_features) < self.config.global_.min_features
@@ -181,12 +184,11 @@ class AutonomousNavigationApp:
             ):
                 old_features = feature_detector.detect_features(gray)
                 trail_mask = np.zeros_like(old_frame)
-
             dx_to_search_center = state.dx_to_search_center
             dy_to_search_center = state.dy_to_search_center
 
+            # If in landing phase, prepare for safe zone calculation
             if mission_manager.in_landing_phase:
-                # Search zone is ALWAYS centered on the original target
                 dx_to_search_center = cm_to_pixels(
                     dx_to_search_center,
                     state.position[2],
@@ -207,6 +209,7 @@ class AutonomousNavigationApp:
                     self.config.navigation.search_zone_outer_thresh
                 )
 
+                # Compute safe zone from hazard detector
                 (
                     current_frame_safe_dx,
                     current_frame_safe_dy,
@@ -223,6 +226,7 @@ class AutonomousNavigationApp:
                 )
                 hazard_points = hazard_detector.hazard_points
 
+            # Otherwise no safe zone needed yet
             else:
                 current_frame_safe_dx = current_frame_safe_dy = None
                 current_frame_safe_px = None
@@ -266,17 +270,23 @@ class AutonomousNavigationApp:
                 hazard_points,
             )
 
+            # Show the image
             cv2.imshow("Martian Rover Navigation", annotated)
 
+            # Update params for next loop
             old_gray = gray.copy()
             last_frame_time = current_time
 
+            # Add frame to saved frames list
             if self.config.global_.save_frames:
                 self.recorded_frames.append((last_frame_time, annotated.copy()))
 
+            # Quit key
             key = cv2.waitKey(30) & 0xFF
             if key == ord("q"):
                 break
+
+            # Reset key
             elif key == ord("r"):
                 state.reset()
                 mission_manager.reset()
@@ -284,9 +294,47 @@ class AutonomousNavigationApp:
                 old_features = feature_detector.detect_features(gray)  # Redetect fresh
                 print("Full system reset")
 
+        # Save frames
         if self.config.global_.save_frames:
             self.save_frames_to_h5()
 
+        # Shutdown modules when finished
         camera.stop()
         lidar.stop()
         cv2.destroyAllWindows()
+
+    def save_frames_to_h5(self):
+        """
+        Saves the frames from the current scenario run to HDF5
+        """
+
+        # File path
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = "/home/kyle/recordings"
+        os.makedirs(out_dir, exist_ok=True)
+        filename = os.path.join(out_dir, f"recording_{timestamp_str}.h5")
+
+        # Open file
+        with h5py.File(filename, "w") as f:
+            n_frames = len(self.recorded_frames)
+            height, width, channels = self.recorded_frames[0][1].shape
+
+            # Frames dataset
+            frames_dataset = f.create_dataset(
+                "frames",
+                shape=(n_frames, height, width, channels),
+                dtype=np.uint8,
+                chunks=(1, height // 2, width // 2, channels),
+                compression="gzip",
+                compression_opts=4,
+            )
+
+            # Timestamps dataset
+            timestamp_dataset = f.create_dataset(
+                "timestamps", shape=(n_frames,), dtype=np.float64
+            )
+            for i, (timestamp, frame) in enumerate(self.recorded_frames):
+                frames_dataset[i] = frame
+                timestamp_dataset[i] = timestamp - self.recorded_frames[0][0]
+
+        print(f"Saved to: {filename}")
