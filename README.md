@@ -19,7 +19,7 @@ The drone uses a downward-facing camera for optical flow velocity estimation usi
 
 **Demo Video:**
 
-![Demo video](readme_imgs/recording_20260201_203336.gif)
+![Demo video](readme_imgs/full_scenario.gif)
 
 
 > Note: This project uses a human-in-the-loop. The real-time algorithms produce on-screen flight directions that are carried out manually - this allows me to thoroughly validate the system without risking physical flight hardware.
