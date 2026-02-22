@@ -112,3 +112,5 @@ The system was rigorously tested in live hardware runs on the Raspberry Pi 5, us
 **Conclusion:**
 
 This project brings together computer vision, deep learning, sensor fusion, state estimation, and embedded systems programming. It demonstrates the ability to build real-time data processing pipelines that operate reliably on resource-constrained hardware, while handling noisy and degraded sensor data in a challenging physical environment. The result is a system that showcases a well-rounded skill set in aerospace applications like planetary exploration, guidance and navigation, embedded AI applications, and autonomous robotics.
+
+![Demo video again](readme_imgs/full_scenario.gif)
